@@ -2,6 +2,12 @@
 
 DeathStar is a Python script that uses [Empire's](https://github.com/EmpireProject/Empire) RESTful API to automate gaining Domain Admin rights in Active Directory environments using a variety of techinques.
 
+<p align="center">
+  <img src="https://cloud.githubusercontent.com/assets/5151193/26531202/6229d238-43a1-11e7-87cf-3464f71eeb1e.gif" width="100%" alt="deathstar"/>
+</p>
+
+![]()
+
 # Installation
 
 Currently, for Death Star to work you're going to have to install my fork of Empire until this [pull request](https://github.com/EmpireProject/Empire/pull/531) gets merged and the changes get pushed to master. The fork contains some API and back-end database fixes for scripts that interact with the RESTful API.
