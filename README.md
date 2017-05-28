@@ -6,7 +6,7 @@ DeathStar is a Python script that uses [Empire's](https://github.com/EmpireProje
 
 Currently, for Death Star to work you're going to have to install my fork of Empire until this [pull request](https://github.com/EmpireProject/Empire/pull/531) gets merged and the changes get pushed to master. The fork contains some API and back-end database fixes for scripts that interact with the RESTful API.
 
-First grab and install Empire:
+- First grab, install and run Empire:
 ```bash
 git clone https://github.com/byt3bl33d3r/Empire
 cd Empire/setup && ./install.sh && cd ..
