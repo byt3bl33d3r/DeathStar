@@ -14,7 +14,7 @@ cd Empire/setup && ./install.sh && cd ..
 python empire --rest --username empireadmin --password Password123
 ```
 
-Then grab, setup and run DeathStar:
+- Then grab, setup and run DeathStar:
 ```bash
 git clone https://github.com/byt3bl33d3r/DeathStar
 # Death Star is written in Python3
