@@ -80,12 +80,17 @@ def login(empire_username, empire_password):
                'password': empire_password}
 
     print_info('Powering up the Death Star')
-    r = requests.post(base_url + '/api/admin/login', json=payload, headers=headers, verify=False)
 
-    if r.status_code == 200:
-        token['token'] = r.json()['token']
-    else:
-        print_bad('I find your lack of faith disturbing... (Authentication Failed)')
+    try:
+        r = requests.post(base_url + '/api/admin/login', json=payload, headers=headers, verify=False)
+        
+        if r.status_code == 200:
+            token['token'] = r.json()['token']
+        else:
+            print_bad('I find your lack of faith disturbing... (Authentication Failed)')
+            sys.exit(1)
+    except ConnectionError:
+        print_bad('Connection Error. Check Empire RESTful API') # Connection refused
         sys.exit(1)
 
 def get_listener_by_name(listener_name='DeathStar'):
