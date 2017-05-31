@@ -368,9 +368,9 @@ def get_loggedon(agent_name, computer_name='localhost'):
     for entry in results:
         if not entry or entry.find('$') != -1:
             continue
-
         entry = re.sub(' +', ' ', entry.strip())
-        username, domain, logon_server,_= entry.split()
+        username = entry.split()[0]
+        domain = entry.split()[1]
         user = '{}\\{}'.format(domain, username)
         if user not in loggedon_users:
             loggedon_users.append(user)
