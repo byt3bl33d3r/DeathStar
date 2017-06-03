@@ -348,7 +348,7 @@ def gpp(agent_name):
             if not len(guid) == 36:
                 raise
 
-            if not list(filter(lambda v: v['guid'] == guid, gpps)):
+            if not list(filter(lambda v: v['guid'] == guid, gpps)) and ('BLANK' not in usernames):
                 gpp['file'] = file
                 gpp['guid'] = guid
                 gpp['creds'] = dict(zip(usernames, passwords))
