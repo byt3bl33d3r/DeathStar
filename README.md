@@ -6,7 +6,11 @@ DeathStar is a Python script that uses [Empire's](https://github.com/EmpireProje
   <img src="https://cloud.githubusercontent.com/assets/5151193/26531202/6229d238-43a1-11e7-87cf-3464f71eeb1e.gif" width="100%" alt="deathstar"/>
 </p>
 
-![]()
+# How does it work?
+
+See the accompanying blog post here:
+
+https://byt3bl33d3r.github.io/automating-the-empire-with-the-death-star-getting-domain-admin-with-a-push-of-a-button.html
 
 # Installation
 
