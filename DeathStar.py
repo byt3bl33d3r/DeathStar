@@ -88,6 +88,7 @@ def login(empire_username, empire_password):
             token['token'] = r.json()['token']
         else:
             print_bad('I find your lack of faith disturbing... (Authentication Failed)')
+            if debug: print_debug('Status Code: {} Response: {}'.format(r.status_code, r.text))
             sys.exit(1)
     except ConnectionError:
         print_bad('Connection Error. Check Empire RESTful API') # Connection refused
