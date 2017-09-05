@@ -612,7 +612,7 @@ def agent_finished_initializing(agent_dict):
     '''
     If these values are None it means the agent hasn't finished initializing on the target
     '''
-    if agent_dict['username'] is None or agent_dict['hostname'] is None or agent['os_details'] is None:
+    if agent_dict['username'] is None or agent_dict['hostname'] is None or agent_dict['os_details'] is None:
         return False
     return True
 
