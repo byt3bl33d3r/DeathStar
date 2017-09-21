@@ -1,3 +1,5 @@
+![Supported Python versions](https://img.shields.io/badge/python-3-brightgreen.svg)
+
 # DeathStar
 
 DeathStar is a Python script that uses [Empire's](https://github.com/EmpireProject/Empire) RESTful API to automate gaining Domain Admin rights in Active Directory environments using a variety of techinques.
