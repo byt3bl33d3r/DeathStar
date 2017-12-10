@@ -28,7 +28,6 @@ from termcolor import colored
 from argparse import RawTextHelpFormatter
 from time import sleep
 from requests import ConnectionError
-from IPython import embed
 
 # The following disables the InsecureRequests warning and the 'Starting new HTTPS connection' log message
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
