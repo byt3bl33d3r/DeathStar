@@ -728,7 +728,7 @@ if __name__ == '__main__':
     args.add_argument('-u', '--username', type=str, default='empireadmin', help='Empire username (default: empireadmin)')
     args.add_argument('-p', '--password', type=str, default='Password123', help='Empire password (default: Password123)')
     args.add_argument('-lip', '--listener-ip', type=str, help='IP for the DeathStar listener (Empire should auto detect the IP, if not use this flag)')
-    args.add_argument('-lp', '--listener-port', type=int, default=8443, metavar='PORT', help='Port to start the DeathStar listener on (default: 8443)')
+    args.add_argument('-lp', '--listener-port', type=int, default=80, metavar='PORT', help='Port to start the DeathStar listener on (default: 8443)')
     args.add_argument('-t', '--threads', type=int, default=20, help='Specifies the number of threads for modules to use (default: 20)')
     args.add_argument('--no-mimikatz', action='store_true', help='Do not use Mimikatz during lateral movement (default: False)')
     args.add_argument('--no-domain-privesc', action='store_true', help='Do not use domain privilege escalation techniques (default: False)')
