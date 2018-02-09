@@ -40,8 +40,8 @@ pip3 install -r requirements.txt
 
 # How to fund my tea & sushi reserve
 
-BTC: 1ER8rRE6NTZ7RHN88zc6JY87LvtyuRUJGU
+BTC: `1ER8rRE6NTZ7RHN88zc6JY87LvtyuRUJGU`
 
-ETH: 0x91d9aDCf8B91f55BCBF0841616A01BeE551E90ee
+ETH: `0x91d9aDCf8B91f55BCBF0841616A01BeE551E90ee`
 
-LTC: LLMa2bsvXbgBGnnBwiXYazsj7Uz6zRe4fr
+LTC: `LLMa2bsvXbgBGnnBwiXYazsj7Uz6zRe4fr`
