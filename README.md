@@ -8,6 +8,10 @@ DeathStar is a Python script that uses [Empire's](https://github.com/EmpireProje
   <img src="https://cloud.githubusercontent.com/assets/5151193/26531202/6229d238-43a1-11e7-87cf-3464f71eeb1e.gif" width="100%" alt="deathstar"/>
 </p>
 
+# Acknowledgments
+
+Thanks @DanMcInerney for the insane amount of suffering you've went through to fix this
+
 # How does it work?
 
 See the accompanying blog post here:
