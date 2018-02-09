@@ -828,8 +828,6 @@ if __name__ == '__main__':
                                                                                                                                                            agent['username'],
                                                                                                                                                            agent['high_integrity']))
 
-#                print(agent['name'],agent['hostname'],agent['high_integrity'])#111111
-
                 agents[agent_name] = {'id': agent['ID'],
                                       'ip': agent['external_ip'],
                                       'hostname': agent['hostname'],
