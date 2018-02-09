@@ -10,7 +10,7 @@ DeathStar is a Python script that uses [Empire's](https://github.com/EmpireProje
 
 # Acknowledgments
 
-Thanks @DanMcInerney for the insane amount of suffering you've went through to fix this
+Thanks [@DanHMcInerney](https://twitter.com/DanHMcInerney) for the insane amount of suffering you've went through to fix this
 
 # How does it work?
 
