@@ -1,6 +1,6 @@
 ![Supported Python versions](https://img.shields.io/badge/python-3-brightgreen.svg)
 
-**As of August 2nd, 2019 this project is no longer maintained as the Empire project (which this project relies on) is not longer supported**
+**As of August 2nd 2019 this project is no longer maintained as the Empire project (which Deathstar relies on) is no longer supported**
 
 # DeathStar
 
