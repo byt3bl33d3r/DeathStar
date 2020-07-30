@@ -12,9 +12,9 @@ class EmpireModuleExecutionTimeout(Exception):
     pass
 
 class EmpireEvents:
-    def __init__(self, empire_api):
-        self.empire_api = empire_api
-        self.client = empire_api.client
+    def __init__(self, api):
+        self.api = api
+        self.client = api.client
 
     async def all(self):
         r = await self.client.get("reporting")
@@ -34,9 +34,9 @@ class EmpireEvents:
 
 
 class EmpireCredentials:
-    def __init__(self, empire_api):
-        self.empire_api = empire_api
-        self.client = empire_api.client
+    def __init__(self, api):
+        self.api = api
+        self.client = api.client
 
     async def get(self):
         r = await self.client.get("creds")
@@ -44,9 +44,9 @@ class EmpireCredentials:
 
 
 class EmpireModules:
-    def __init__(self, empire_api):
-        self.empire_api = empire_api
-        self.client = empire_api.client
+    def __init__(self, api):
+        self.api = api
+        self.client = api.client
 
     async def get(self, name):
         r = await self.client.get(f"modules/{name}")
@@ -67,7 +67,7 @@ class EmpireModules:
         while n <= timeout:
             for task in filter(
                     lambda r: r['taskID'] == task_id,
-                    await self.empire_api.agents.results(agent)
+                    await self.api.agents.results(agent)
                 ):
 
                 if task['results'] != None and not task['results'].startswith("Job started"):
@@ -80,9 +80,9 @@ class EmpireModules:
 
 
 class EmpireAgents:
-    def __init__(self, empire_api):
-        self.empire_api = empire_api
-        self.client = empire_api.client
+    def __init__(self, api):
+        self.api = api
+        self.client = api.client
 
     async def get(self, name=None):
         url = f"agents/{name}" if name else "agents"
@@ -122,9 +122,9 @@ class EmpireAgents:
 
 
 class EmpireListeners:
-    def __init__(self, empire_api):
-        self.empire_api = empire_api
-        self.client = empire_api.client
+    def __init__(self, api):
+        self.api = api
+        self.client = api.client
 
     async def get(self, name=None):
         url = f"listeners/{name}" if name else "listeners"
