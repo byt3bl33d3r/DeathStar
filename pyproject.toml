@@ -1,0 +1,35 @@
+[tool.poetry]
+name = "deathstar"
+version = "2.0.0"
+description = ""
+readme = "README.md"
+homepage = "https://github.com/byt3bl33d3r/DeathStar"
+repository = "https://github.com/byt3bl33d3r/DeathStar"
+authors = ["Marcello Salvati <byt3bl33d3r@pm.com>"]
+license = "GPL-3.0-only"
+exclude = ["tests/*"]
+include = ["LICENSE"]
+classifiers = [
+    "Topic :: Security",
+]
+packages = [
+    { include = "deathstar"}
+]
+
+[tool.poetry.scripts]
+deathstar = 'deathstar.deathstar:run'
+
+[tool.poetry.dependencies]
+python = "^3.8"
+httpx = "^0.13.3"
+
+[tool.poetry.dev-dependencies]
+black = "^19.10b0"
+pytest = "^6.0.0"
+pytest-asyncio = "^0.14.0"
+flake8 = "^3.8.3"
+pylint = "^2.5.3"
+
+[build-system]
+requires = ["poetry>=0.12"]
+build-backend = "poetry.masonry.api"
