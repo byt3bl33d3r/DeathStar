@@ -8,7 +8,7 @@ repository = "https://github.com/byt3bl33d3r/DeathStar"
 authors = ["Marcello Salvati <byt3bl33d3r@pm.com>"]
 license = "GPL-3.0-only"
 exclude = ["tests/*"]
-include = ["LICENSE"]
+include = ["LICENSE", "deathstar/crystals/*"]
 classifiers = [
     "Topic :: Security",
 ]
@@ -22,6 +22,7 @@ deathstar = 'deathstar.deathstar:run'
 [tool.poetry.dependencies]
 python = "^3.8"
 httpx = "^0.13.3"
+PyYAML = "^5.3.1"
 
 [tool.poetry.dev-dependencies]
 black = "^19.10b0"

@@ -1,6 +1,8 @@
 import logging
 import asyncio
+import pkg_resources
 import httpx
+import random
 
 log = logging.getLogger("deathstar.empire")
 
@@ -8,8 +10,14 @@ log = logging.getLogger("deathstar.empire")
 class EmpireLoginError(Exception):
     pass
 
+
 class EmpireModuleExecutionTimeout(Exception):
     pass
+
+
+class EmpireModuleExecutionError(Exception):
+    pass
+
 
 class EmpireEvents:
     def __init__(self, api):
@@ -47,6 +55,7 @@ class EmpireModules:
     def __init__(self, api):
         self.api = api
         self.client = api.client
+        # self.wrapped =
 
     async def get(self, name):
         r = await self.client.get(f"modules/{name}")
@@ -57,26 +66,49 @@ class EmpireModules:
         return r.json()["modules"]
 
     async def execute(self, name, agent, options={}, timeout=10):
+        await asyncio.sleep(random.randint(1, 3))
+
+        """
+        Ok, so you're probably wondering what in the kentucky fried fuck is the above sleep statement all about.
+
+        Empire wasn't designed to handle concurrent HTTP API requests as it interacts on the
+        same underlying Python object(s) on each request (No locking, or anything). 
+
+        Meaning that if we make 2 concurrent API requests to execute the same module with diffrent options, 
+        the requests will override each others options. Fun times 🤦‍♂️
+
+        Since I have no intention of re-writing Empire, the quick and horrendous fix is to add a small random delay between concurrent requests
+        in order to make this work as intended if we use this coroutine with asyncio.gather() calls.
+        """
+
         r = await self.client.post(f"modules/{name}", json={"Agent": agent, **options})
         if timeout == -1:
             return r.json()
 
-        task_id = r.json()['taskID']
+        _json = r.json()
+        if "error" in _json:
+            log.error(f"Error executing module '{name}': {_json['error']}")
+        elif _json["success"] == False:
+            log.error(f"Error executing module '{name}': {_json['msg']}")
+
+        task_id = _json["taskID"]
 
         n = 0
         while n <= timeout:
-            for task in filter(
-                    lambda r: r['taskID'] == task_id,
-                    await self.api.agents.results(agent)
-                ):
+            task = self.api.agents.task(agent, task_id)
 
-                if task['results'] != None and not task['results'].startswith("Job started"):
-                    return task
+            if task["results"] != None and not task["results"].startswith(
+                "Job started"
+            ):
+                log.debug(f"Agent {agent} returned results for task {task_id}")
+                return task
 
-            n =+ 1
+            n = +1
             await asyncio.sleep(1)
 
-        raise EmpireModuleExecutionTimeout(f"Retrieving results for module '{name}' with taskID {task_id} exceeded timeout")
+        raise EmpireModuleExecutionTimeout(
+            f"Retrieving results for module '{name}' with taskID {task_id} exceeded timeout"
+        )
 
 
 class EmpireAgents:
@@ -114,7 +146,11 @@ class EmpireAgents:
             return r.json()
 
         r = await self.client.get(f"agents/{name}/results")
-        return r.json()['results'][0]['AgentResults']
+        return r.json()["results"][0]["AgentResults"]
+
+    async def task(self, name, task_id):
+        r = await self.client.get(f"agents/{name}/task/{task_id}")
+        return r.json()
 
     async def kill(self, name):
         r = await self.client.get(f"agents/{name}/kill")
