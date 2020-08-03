@@ -39,6 +39,10 @@ async def test_agent_results(empire, agent):
     r = await empire.agents.results(agent)
     print(beautify_json(r))
 
+@pytest.mark.asyncio
+async def test_shell(empire, agent):
+    r = await empire.agents.shell(agent, "tasklist")
+    print(beautify_json(r))
 
 @pytest.mark.asyncio
 async def test_events(empire, agent):

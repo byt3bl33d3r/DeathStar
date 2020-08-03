@@ -1,6 +1,6 @@
 async def crystallize(agent):
-    output = await deathstar.empire.modules.execute(
-        "powershell/management/get_domain_sid", agent
-    )
+    output = await agent.execute("powershell/management/get_domain_sid")
 
-    return output["results"].splitlines()
+    domain_sid = output["results"].splitlines()[0]
+    log.debug(domain_sid)
+    return domain_sid

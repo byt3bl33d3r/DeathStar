@@ -23,4 +23,4 @@ async def empire():
 @pytest.fixture
 async def agent(empire):
     agents = await empire.agents.get()
-    return agents[0]["name"]
+    return agents[0]

@@ -54,7 +54,7 @@ class KyberCrystals:
                     except Exception as e:
                         log.error(f'Failed loading "{crystal_file}": {e}')
 
-        log.debug(f"Loaded {len(self.loaded)} crystal(s)")
+        log.debug(f"Loaded {len(self.loaded)} kyber crystal(s)")
 
     def __getattr__(self, name):
         for crystal in self.loaded:

