@@ -7,8 +7,10 @@ class PlanetaryRecon:
             lambda: {
                 "recon_performed" : asyncio.Event(),
                 "domain_sid": "",
+                "domain_controllers": [],
                 "domain_admins": [],
-                "enterprise_admins": []
+                "enterprise_admins": [],
+                "priority_targets": set()   # Hosts with an admin logged in/session
             }
         )
 
@@ -17,8 +19,8 @@ class PlanetaryRecon:
         all_admins = []
 
         for domain in self.data:
-            all_admins.extend(self.domain_admins(domain))
-            all_admins.extend(self.enterprise_admins(domain))
+            all_admins.extend(self.get_domain_admins(domain))
+            all_admins.extend(self.get_enterprise_admins(domain))
 
         return all_admins
 
@@ -31,16 +33,45 @@ class PlanetaryRecon:
 
         return admins
 
-    def domain_admins(self, domain):
+    def get_domain_controllers(self, domain):
+        return self.data[domain]["domain_controllers"]
+    
+    def set_domain_controllers(self, domain, dcs):
+        self.data[domain]["domain_controllers"] = dcs
+
+    # These are needed for localization cause english isn't the only language in the world...
+    def get_da_group_name(self, domain):
+        return self.data[domain]["domain_admins"][0]["GroupName"]
+
+    def get_ea_group_name(self, domain):
+        return self.data[domain]["enterprise_admins"][0]["GroupName"]
+
+    def get_domain_admins(self, domain):
         return self.get_admins_for_domain("domain_admins", domain)
+    
+    def set_domain_admins(self, domain, domain_admins):
+        self.data[domain]["domain_admins"] = domain_admins
 
-    def enterprise_admins(self, domain):
+    def get_enterprise_admins(self, domain):
         return self.get_admins_for_domain("enterprise_admins", domain)
+    
+    def set_enterprise_admins(self, domain, enterprise_admins):
+        self.data[domain]["enterprise_admins"] = enterprise_admins
 
-    def domain_sid(self, domain):
+    def get_domain_sid(self, domain):
         return self.data[domain]["domain_sid"]
+    
+    def set_domain_sid(self, domain, sid):
+        self.data[domain]["domain_sid"] = sid
+    
+    def get_priority_targets(self, domain):
+        return self.data[domain]["priority_targets"]
+    
+    def set_priority_targets(self, domain, targets):
+        for t in targets:
+            self.data[domain]["priority_targets"].add(t)
 
-    def has_been_performed(self, domain):
+    def been_performed(self, domain):
         return self.data[domain]["recon_performed"].is_set()
 
     def set_performed(self, domain):

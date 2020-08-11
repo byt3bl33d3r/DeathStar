@@ -10,5 +10,7 @@ async def crystallize(agent, computer_name="localhost"):
 
     results = output["results"]
     parsed = posh_table_parser(results)
-    log.debug(beautify_json(parsed))
-    return parsed
+    filtered = list(filter(lambda s: not s["UserName"].endswith("$"), parsed))
+
+    log.debug(beautify_json(filtered))
+    return filtered

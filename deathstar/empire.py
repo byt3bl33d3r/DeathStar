@@ -1,6 +1,5 @@
 import logging
 import asyncio
-import pkg_resources
 import httpx
 
 log = logging.getLogger("deathstar.empire")
@@ -115,7 +114,7 @@ class EmpireUtils(EmpireApi):
         task_id = task["taskID"]
 
         n = 0
-        while n <= timeout:
+        while True:
             task = await self.api.agents.task(agent, task_id)
 
             if task["results"] != None and not task["results"].startswith(
@@ -125,9 +124,9 @@ class EmpireUtils(EmpireApi):
                 return task
 
             if timeout != -1:
+                if n > timeout:
+                    break
                 n =+ 1
-            else:
-                n = n
 
             await asyncio.sleep(1)
 
