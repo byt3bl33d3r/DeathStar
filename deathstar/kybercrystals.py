@@ -3,12 +3,34 @@ import importlib
 import logging
 import pathlib
 import pkg_resources
+from contextvars import ContextVar
 
 log = logging.getLogger("deathstar.kybercrystals")
 
 
 class KyberCrystalException(Exception):
     pass
+
+
+class KyberContextFilter(logging.Filter):
+    AgentVar = ContextVar("agent")
+
+    def filter(self, record):
+        agent = KyberContextFilter.AgentVar.get()
+        record.agent = agent.name
+        record.agent_username = agent.username
+        return True
+
+
+def kyberlogger(func, name):
+    async def wrapper(*args, **kwargs):
+        agent = args[0] or kwargs.get("agent")
+        log = logging.getLogger(f"deathstar.kybercrystals.{name}")
+        log.filters[0].AgentVar.set(agent)
+        log.debug(f"Running {name}")
+        return await func(*args, **kwargs)
+
+    return wrapper
 
 
 class KyberCrystals:
@@ -35,6 +57,14 @@ class KyberCrystals:
         return module
 
     def get_crystals(self):
+        log_filter = KyberContextFilter()
+        handler = logging.StreamHandler()
+        handler.setFormatter(
+            logging.Formatter(
+                "[%(name)s] %(levelname)s Agent: %(agent)s User: %(agent_username)s - %(message)s"
+            )
+        )
+
         for root, _, files in os.walk(self.crystal_location):
             for crystal in files:
                 crystal_file = self.crystal_location / root / crystal
@@ -50,6 +80,10 @@ class KyberCrystals:
                         c.log = logging.getLogger(
                             f"deathstar.kybercrystals.{crystal_file.stem}"
                         )
+                        c.log.propagate = False
+                        c.log.addHandler(handler)
+                        c.log.addFilter(log_filter)
+
                         self.loaded.append(c)
                     except Exception as e:
                         log.error(f'Failed loading "{crystal_file}": {e}')
@@ -59,5 +93,5 @@ class KyberCrystals:
     def __getattr__(self, name):
         for crystal in self.loaded:
             if name == pathlib.Path(crystal.__file__).stem:
-                return crystal.crystallize
+                return kyberlogger(crystal.crystallize, name)
         raise KyberCrystalException(f"'{name}' crystal does not exist")

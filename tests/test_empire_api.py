@@ -16,36 +16,45 @@ async def test_agents(empire):
     agents = await empire.agents.get()
     assert len(agents) > 0
 
-    name = agents[0]["name"]
-    agent = await empire.agents.get(name)
+    agent = await empire.agents.get(agents[0].name)
     assert agent
 
 
 @pytest.mark.asyncio
-async def test_modules(empire, agent):
+async def test_modules(empire, agents):
+    agent = agents[0]
+
     modules = await empire.modules.search("get_domain_sid")
     assert len(modules) > 0
 
     module = await empire.modules.get("powershell/management/get_domain_sid")
     assert module
 
-    r = await empire.modules.execute(module["Name"], agent)
+    r = await empire.modules.execute(module, agent)
     print(beautify_json(r))
     assert r["results"] != None and not r["results"].startswith("Job started")
 
 
 @pytest.mark.asyncio
-async def test_agent_results(empire, agent):
+async def test_agent_results(empire, agents):
+    agent = agents[0]
+
     r = await empire.agents.results(agent)
     print(beautify_json(r))
 
-@pytest.mark.asyncio
-async def test_shell(empire, agent):
-    r = await empire.agents.shell(agent, "tasklist")
-    print(beautify_json(r))
 
 @pytest.mark.asyncio
-async def test_events(empire, agent):
+async def test_shell(empire, agents):
+    agent = agents[0]
+
+    r = await empire.agents.shell("tasklist", agent)
+    print(beautify_json(r))
+
+
+@pytest.mark.asyncio
+async def test_events(empire, agents):
+    agent = agents[0]
+
     r = await empire.events.all()
     print(beautify_json(r))
 

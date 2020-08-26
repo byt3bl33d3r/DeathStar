@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "deathstar"
-version = "2.0.0"
+version = "0.2.0"
 description = ""
 readme = "README.md"
 homepage = "https://github.com/byt3bl33d3r/DeathStar"
@@ -21,8 +21,9 @@ deathstar = 'deathstar.deathstar:run'
 
 [tool.poetry.dependencies]
 python = "^3.8"
-httpx = "^0.13.3"
+httpx = "^0.14.0"
 PyYAML = "^5.3.1"
+termcolor = "^1.1.0"
 
 [tool.poetry.dev-dependencies]
 black = "^19.10b0"

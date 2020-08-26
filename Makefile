@@ -15,7 +15,7 @@ clean:
 
 tests:
 	flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-	python -m pytest
+	pytest
 
 reqs:
 	poetry export -f requirements.txt -o requirements.txt

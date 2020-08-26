@@ -16,11 +16,11 @@ log.addHandler(handler)
 async def empire():
     empire = EmpireApiClient(host=os.environ["EMPIRE_HOST"])
     await empire.login("empireadmin", "Password123!")
-    return empire
+    yield empire
 
 
 @pytest.mark.asyncio
 @pytest.fixture
-async def agent(empire):
+async def agents(empire):
     agents = await empire.agents.get()
-    return agents[0]
+    yield agents

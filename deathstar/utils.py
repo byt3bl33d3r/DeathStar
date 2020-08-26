@@ -1,5 +1,6 @@
 import logging
 import json
+from termcolor import colored
 from argparse import RawTextHelpFormatter, RawDescriptionHelpFormatter
 
 log = logging.getLogger("deathstar.utils")
@@ -11,6 +12,7 @@ class CustomArgFormatter(RawTextHelpFormatter, RawDescriptionHelpFormatter):
 
 def beautify_json(obj) -> str:
     return "\n" + json.dumps(obj, sort_keys=True, indent=4, separators=(",", ": "))
+
 
 def posh_object_parser(output):
     parsed_output = []
@@ -29,11 +31,12 @@ def posh_object_parser(output):
                 previous_value = parsed_block[previous_key]
                 parsed_block[previous_key] = previous_value + entry.strip()
             else:
-                parsed_block[key.strip()] = value.strip()
+                parsed_block[key.strip().lower()] = value.strip()
 
         parsed_output.append(parsed_block)
 
     return parsed_output
+
 
 def posh_table_parser(output):
     parsed_output = []
@@ -45,24 +48,45 @@ def posh_table_parser(output):
     title = blocks[0]
     word_start_positions = []
     for index, char in enumerate(title):
-        if char != " " and title[index-1] == " ":
+        if index == 0 and char != " ":
+            word_start_positions.append(index)
+        elif char != " " and title[index - 1] == " ":
             word_start_positions.append(index)
 
     keys = title.split()
-    word_pos_to_key = {k:v for k,v in zip(word_start_positions, keys)}
+    word_pos_to_key = {k: v.lower() for k, v in zip(word_start_positions, keys)}
     blocks = blocks[2:]
 
     for row in blocks:
         parsed_row_values = {}
         for start_pos in word_start_positions:
-            for index,char in enumerate(row):
-                if index == start_pos and char == " ":
-                    parsed_row_values[word_pos_to_key[start_pos]] = ""
-                    break
-                elif index > start_pos and char == " " and row[index-1] != " ":
-                    parsed_row_values[word_pos_to_key[start_pos]] = row[start_pos:index]
-                    break
+            for index, char in enumerate(row):
+                if index == start_pos:
+                    if char == " ":
+                        parsed_row_values[word_pos_to_key[start_pos]] = ""
+                        break
+
+                if index > start_pos:
+                    if index == (len(row) - 1) and char != " ":
+                        parsed_row_values[word_pos_to_key[start_pos]] = row[
+                            start_pos : index + 1
+                        ]
+                        break
+
+                    if char == " " and row[index - 1] != " ":
+                        parsed_row_values[word_pos_to_key[start_pos]] = row[
+                            start_pos:index
+                        ]
+                        break
 
         parsed_output.append(parsed_row_values)
 
     return parsed_output
+
+
+def print_win_banner():
+    print("\n")
+    print(colored("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=", "yellow"))
+    print(colored("=-=-=-=-=-=-=-=-=-=-=-=-=-=-WIN-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=", "yellow"))
+    print(colored("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=", "yellow"))
+    print("\n")

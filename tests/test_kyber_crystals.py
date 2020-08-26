@@ -27,9 +27,9 @@ async def test_kyber_crystallization(kyber_crystals):
 
 
 @pytest.mark.asyncio
-async def test_crystal_focus(kyber_crystals, agent):
-    sid = await kyber_crystals.get_domain_sid(agent)
-    assert len(sid) > 0
-
-    processes = await kyber_crystals.tasklist(agent)
-    assert len(processes) > 0
+async def test_crystal_focus(kyber_crystals, agents):
+    for agent in agents:
+        # sid = await kyber_crystals.get_domain_sid(agent)
+        # assert len(sid) > 0
+        await kyber_crystals.tasklist(agent)
+        # await kyber_crystals.get_loggedon(agent)

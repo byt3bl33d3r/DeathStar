@@ -1,15 +1,17 @@
 import logging
 import asyncio
 import httpx
+import json
 
 log = logging.getLogger("deathstar.empire")
-
 
 class EmpireLoginError(Exception):
     pass
 
+
 class EmpireAgentNotFoundError(Exception):
     pass
+
 
 class EmpireModuleExecutionTimeout(Exception):
     pass
@@ -18,17 +20,31 @@ class EmpireModuleExecutionTimeout(Exception):
 class EmpireModuleExecutionError(Exception):
     pass
 
+
+class EmpireObjectEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, EmpireAgent):
+            return obj.session_id
+        if isinstance(obj, EmpireModule):
+            return obj.name
+
+        return json.JSONEncoder.default(self, obj)
+
+json._default_encoder = EmpireObjectEncoder()
+
 class EmpireApi:
     def __init__(self, api):
         self.api = api
         self.client = api.client
 
+
 class EmpireObject(EmpireApi):
     def __init__(self, api, raw_object):
         super().__init__(api)
         self._raw = raw_object
-        for k,v in raw_object.items():
+        for k, v in raw_object.items():
             setattr(self, k.lower(), v)
+
 
 class EmpireModule(EmpireObject):
     def __init__(self, api, raw_object):
@@ -41,6 +57,7 @@ class EmpireModule(EmpireObject):
     def __str__(self):
         return self.name
 
+
 class EmpireCredential(EmpireObject):
     @property
     def pretty_username(self):
@@ -48,6 +65,7 @@ class EmpireCredential(EmpireObject):
 
     def __str__(self):
         return self.id
+
 
 class EmpireAgent(EmpireObject):
     @property
@@ -94,10 +112,14 @@ class EmpireUtils(EmpireApi):
 
     async def agent_has_staged(self, agent_data):
         """
-        Empire returns agents even when they haven't finished staging yet...
+        Empire API returns agents even when they haven't finished staging yet...
         """
 
-        if not agent_data["username"] or not agent_data["hostname"] or not agent_data["os_details"]:
+        if (
+            not agent_data["username"]
+            or not agent_data["hostname"]
+            or not agent_data["os_details"]
+        ):
             return False
         return True
 
@@ -107,9 +129,13 @@ class EmpireUtils(EmpireApi):
         """
 
         if "error" in task:
-            raise EmpireModuleExecutionError(f"Error executing module/command '{module}': {task['error']}")
+            raise EmpireModuleExecutionError(
+                f"Error executing module/command '{module}': {task['error']}"
+            )
         elif task["success"] == False:
-            raise EmpireModuleExecutionError(f"Error executing module/command '{module}': {task['msg']}")
+            raise EmpireModuleExecutionError(
+                f"Error executing module/command '{module}': {task['msg']}"
+            )
 
         task_id = task["taskID"]
 
@@ -126,7 +152,7 @@ class EmpireUtils(EmpireApi):
             if timeout != -1:
                 if n > timeout:
                     break
-                n =+ 1
+                n = +1
 
             await asyncio.sleep(1)
 
@@ -183,11 +209,13 @@ class EmpireModules(EmpireApi):
         the requests will override each others options. Fun times 🤦‍♂️
 
         Since I have no intention of re-writing Empire, the quick fix is to add a mutex lock 
-        in order to make this work as intended if we use this coroutine with asyncio.gather() calls.
+        in order to make this work as intended when we use this coroutine with asyncio.gather() calls.
         """
 
         async with self._execute_lock:
-            r = await self.client.post(f"modules/{module}", json={"Agent": agent, **options})
+            r = await self.client.post(
+                f"modules/{module}", json={"Agent": agent, **options}
+            )
         return r.json()
 
     async def execute(self, module, agent, options={}, timeout=10):
@@ -209,8 +237,8 @@ class EmpireAgents(EmpireApi):
         else:
             r = await self.client.get(f"agents")
             return [
-                EmpireAgent(self.api, result) 
-                for result in r.json()["agents"] 
+                EmpireAgent(self.api, result)
+                for result in r.json()["agents"]
                 if await self.api.utils.agent_has_staged(result)
             ]
 

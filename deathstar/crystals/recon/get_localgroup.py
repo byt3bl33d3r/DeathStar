@@ -1,10 +1,10 @@
 from deathstar.utils import posh_object_parser, beautify_json
 
 
-async def crystallize(agent, gpo_guid):
+async def crystallize(agent, group_name="Administrators", recurse=True):
     output = await agent.execute(
-        "powershell/situational_awareness/network/powerview/get_gpo_computer",
-        options={"GUID": gpo_guid},
+        "powershell/situational_awareness/network/powerview/get_localgroup",
+        options={"GroupName": group_name, "Recurse": str(recurse),},
     )
 
     results = output["results"]
