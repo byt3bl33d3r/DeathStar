@@ -235,7 +235,7 @@ class EmpireAgents(EmpireApi):
             if await self.api.utils.agent_has_staged(agent_data):
                 return EmpireAgent(self.api, agent_data)
         else:
-            r = await self.client.get(f"agents")
+            r = await self.client.get("agents")
             return [
                 EmpireAgent(self.api, result)
                 for result in r.json()["agents"]
@@ -250,7 +250,7 @@ class EmpireAgents(EmpireApi):
         return r.json()
 
     async def shell_nowait(self, cmd, agent):
-        # I'm not sure if we need the lock here but better safe then sorry
+        # I'm not sure if we need the lock here too but better safe then sorry
         async with self._execute_lock:
             r = await self.client.post(f"agents/{agent}/shell", json={"command": cmd})
         return r.json()
@@ -327,3 +327,6 @@ class EmpireApiClient:
             raise EmpireLoginError("Unable to login, credentials invalid")
 
         self.client.params = {"token": r.json()["token"]}
+
+    async def close(self):
+        await self.client.aclose()

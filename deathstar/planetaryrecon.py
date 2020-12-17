@@ -40,7 +40,7 @@ class PlanetaryRecon:
     def set_domain_controllers(self, domain, dcs):
         self.data[domain]["domain_controllers"] = dcs
 
-    # These are needed for localization cause english isn't the only language in the world...
+    # These are needed for localization cause english isn't the only language in the world
     def get_da_group_name(self, domain):
         return self.data[domain]["domain_admins"][0]["groupname"]
 

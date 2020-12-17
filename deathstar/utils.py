@@ -1,6 +1,6 @@
 import logging
 import json
-from termcolor import colored
+from rich import print
 from argparse import RawTextHelpFormatter, RawDescriptionHelpFormatter
 
 log = logging.getLogger("deathstar.utils")
@@ -86,7 +86,7 @@ def posh_table_parser(output):
 
 def print_win_banner():
     print("\n")
-    print(colored("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=", "yellow"))
-    print(colored("=-=-=-=-=-=-=-=-=-=-=-=-=-=-WIN-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=", "yellow"))
-    print(colored("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=", "yellow"))
+    print("[yellow]=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=[/yellow]")
+    print("[yellow]=-=-=-=-=-=-=-=-=-=-=-=-=-=-WIN-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=[/yellow]")
+    print("[yellow]=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=[/yellow]")
     print("\n")
