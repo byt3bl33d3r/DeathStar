@@ -74,9 +74,11 @@ Since Empire has a Docker image, you could totally write Docker Compose file to 
 
 ### Python Package
 
+**This project is available on Pypi under the name `deathstar-empire` because someone else aleady has a project called deathstar**
+
 ```
 python3 -m pip install --user pipx
-pipx install deathstar
+pipx install deathstar-empire
 ```
 
 ### Development Install
@@ -183,4 +185,3 @@ Some of the main features I'd love would be:
 - Make an easier way to add Kyber Crystals to the main logic (without requiring code modifications)
  
  These would all require a ton more work, and I'm not even sure if people find this useful as it is. If you like the idea and think it could be useful, feel free to ping me on [Twitter](https://twitter.com/home), [sponsor me on Github](https://github.com/sponsors/byt3bl33d3r/) or send a PR.
- 

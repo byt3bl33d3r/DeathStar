@@ -1,7 +1,7 @@
 [tool.poetry]
-name = "deathstar"
+name = "deathstar-empire"
 version = "0.2.0"
-description = ""
+description = "Uses Empire's RESTful API to automate gaining Domain and/or Enterprise Admin rights in Active Directory environments using some of the most common offensive TTPs"
 readme = "README.md"
 homepage = "https://github.com/byt3bl33d3r/DeathStar"
 repository = "https://github.com/byt3bl33d3r/DeathStar"
