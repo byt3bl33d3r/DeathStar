@@ -86,7 +86,7 @@ pipx install deathstar-empire
 You should only be installing DeathStar this way if you intend to hack on the source code. You're going to Python 3.8+ and [Poetry](https://python-poetry.org/). Please refer to the Poetry installation documentation in order to install it.
 
 ```console
-git clone https://github.com/byt3bl33d3r/DeathStar && cd WitnessMe
+git clone https://github.com/byt3bl33d3r/DeathStar && cd DeathStar
 poetry install
 ```
 
