@@ -21,7 +21,7 @@ deathstar = 'deathstar.deathstar:run'
 
 [tool.poetry.dependencies]
 python = "^3.8"
-httpx = "^0.16.0"
+httpx = ">=0.16,<0.24"
 rich = "^9.4.0"
 
 [tool.poetry.dev-dependencies]
