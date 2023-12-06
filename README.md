@@ -6,14 +6,6 @@
 
 DeathStar is a Python script that uses [Empire's](https://github.com/BC-SECURITY/Empire) RESTful API to automate gaining Domain and/or Enterprise Admin rights in Active Directory environments using some of the most common offensive TTPs.
 
-# Sponsors
-[<img src="https://www.blackhillsinfosec.com/wp-content/uploads/2016/03/BHIS-logo-L-300x300.png" width="130" height="130"/>](https://www.blackhillsinfosec.com/)
-[<img src="https://handbook.volkis.com.au/assets/img/Volkis_Logo_Brandpack.svg" width="130" hspace="10"/>](https://volkis.com.au)
-[<img src="https://user-images.githubusercontent.com/5151193/85817125-875e0880-b743-11ea-83e9-764cd55a29c5.png" width="200" vspace="21"/>](https://qomplx.com/blog/cyber/)
-[<img src="https://user-images.githubusercontent.com/5151193/86521020-9f0f4e00-be21-11ea-9256-836bc28e9d14.png" width="250" hspace="20"/>](https://ledgerops.com)
-[<img src="https://user-images.githubusercontent.com/5151193/102297674-e6d7ec80-3f0c-11eb-982f-cc5d13b0e9ce.jpg" width="250" hspace="20"/>](https://www.guidepointsecurity.com/)
-[<img src="https://user-images.githubusercontent.com/5151193/95542303-a27f1c00-09b2-11eb-8682-e10b3e0f0710.jpg" width="200" hspace="20"/>](https://lostrabbitlabs.com/)
-
 # Table of Contents
 - [DeathStar](#deathstar)
   * [Motivation](#motivation)
@@ -53,12 +45,6 @@ Here's a complete list of the new and shiny things:
 - Implements the Kyber Crystal Plugin system that allows anybody to extend it's functionality.
 - Active Monitoring: this allows DeathStar to poll all compromised machines for new logins and adapt attack paths accordingly.
 - Uses the [BC-Security Empire Fork](https://github.com/BC-SECURITY/Empire)
-
-## Official Discord Channel
-
-Come hang out on the Porchetta Industries Discord server!
-
-[![Porchetta Industries](https://discordapp.com/api/guilds/736724457258745996/widget.png?style=banner3)](https://discord.gg/ycGXUxy)
 
 ## Installation
 
